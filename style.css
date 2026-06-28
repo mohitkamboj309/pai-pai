@@ -221,6 +221,7 @@ body.kb-open .bottom-nav { transform: translateY(150%); }
 }
 .chip.active { background: var(--green); color: #fff; border-color: var(--green); box-shadow: 0 4px 12px rgba(15,81,50,.22); }
 .chip.sm { padding: 7px 12px; font-size: 13px; font-weight: 600; }
+.chip.cat-add { border-style: dashed; border-color: var(--green-2); color: var(--green); }
 
 .amt-preview { font-size: 13px; color: var(--muted); margin: 7px 2px 0; font-weight: 500; }
 .amt-preview b { color: var(--green); font-size: 15px; font-weight: 800; }

@@ -116,6 +116,8 @@ function itemSuggestions(cat) {
   const custom = learned('gk_items_' + cat);
   return Array.from(new Set([...base, ...custom]));
 }
+// Base categories + user ki banayi hui custom categories (naya person/service)
+function allCats() { return Array.from(new Set([...CATEGORIES, ...learned('gk_categories')])); }
 
 // Rate-book: item (+ vendor/shop) ke hisaab se pichla rate yaad rakhta hai
 function rbKey(item, vendor) { return (item || '').trim().toLowerCase() + '|' + (vendor || '').trim().toLowerCase(); }
@@ -457,7 +459,7 @@ function entryRow(t) {
     const bits = [];
     if (t.qty) bits.push(`${t.qty} ${t.unit || ''}${t.rate ? ' @' + inr(t.rate) : ''}`);
     if (t.vendor && t.category !== 'Theka Payment') bits.push(t.vendor);
-    bits.push(accName(t.account_id));
+    if (t.account_id) bits.push(accName(t.account_id));
     meta = bits.filter(Boolean).join(' · ');
   } else if (t.type === 'In') {
     cls = 'in'; amtCls = 'in'; sign = '+'; ico = '💰';
@@ -711,7 +713,13 @@ function openOutForm(existing) {
   const unitOpts = (t.unit && !UNITS.includes(t.unit)) ? [t.unit, ...UNITS] : UNITS;
   const inner = `
     <h3>${existing ? tr('✏️ Edit expense', '✏️ Kharcha edit') : tr('➖ New Expense', '➖ Naya Kharcha')}</h3>
-    <div class="field"><label>${tr('Category', 'Category')}</label>${chipsHtml('cat', CATEGORIES, t.category)}</div>
+    <div class="field"><label>${tr('Category', 'Category')}</label>
+      <div class="chips" data-chips="cat" id="cat-chips"></div>
+      <div id="cat-new" class="hidden" style="display:flex;gap:8px;margin-top:8px">
+        <input id="cat-new-input" placeholder="${tr('New category name', 'Nayi category ka naam')}" style="flex:1" autocapitalize="words" />
+        <button type="button" class="btn-secondary" id="cat-new-add">${tr('Add', 'Add')}</button>
+      </div>
+    </div>
 
     <div id="item-block">
       <div class="field"><label>${tr('Item / Work', 'Item / Kaam')}</label>
@@ -734,8 +742,8 @@ function openOutForm(existing) {
     <div class="field"><label>${tr('From / to whom (vendor)', 'Kisse aaya / kise diya (vendor)')}</label><input id="f-vendor" list="dl-vendor" value="${esc(t.vendor || '')}" placeholder="${tr('shop / person name', 'dukaan / aadmi ka naam')}" />
       <datalist id="dl-vendor">${learned('gk_vendors').map((v) => `<option>${esc(v)}</option>`).join('')}</datalist></div>
 
-    <div class="field"><label>${tr('Paid from (account)', 'Paisa kahan se gaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
     <div class="field"><label>${tr('Payment mode', 'Payment mode')}</label>${chipsHtml('mode', PAY_MODES, t.payment_mode)}</div>
+    <div class="field" id="account-field"><label>${tr('Paid from (account)', 'Paisa kahan se gaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
 
     <div class="row2">
       <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
@@ -754,9 +762,30 @@ function openOutForm(existing) {
       root.querySelector('#item-block').classList.toggle('hidden', isPayment);
       root.querySelector('#theka-block').classList.toggle('hidden', !isTheka);
     };
+    // Custom categories: chips + "Naya" inline add (naya person/service)
+    const catNew = root.querySelector('#cat-new'), catNewIn = root.querySelector('#cat-new-input');
+    const renderCatChips = (selected) => {
+      const wrap = root.querySelector('#cat-chips');
+      wrap.innerHTML = allCats().map((c) => `<button type="button" class="chip ${c === selected ? 'active' : ''}" data-val="${esc(c)}">${esc(c)}</button>`).join('')
+        + `<button type="button" class="chip cat-add" id="cat-add">+ ${tr('New', 'Naya')}</button>`;
+      wrap.querySelectorAll('.chip[data-val]').forEach((c) => c.onclick = () => { catNew.classList.add('hidden'); renderCatChips(c.dataset.val); updItems(c.dataset.val); toggleBlocks(c.dataset.val); });
+      root.querySelector('#cat-add').onclick = () => { catNew.classList.remove('hidden'); catNewIn.value = ''; catNewIn.focus(); };
+    };
+    const addCat = () => {
+      const name = catNewIn.value.trim(); if (!name) return;
+      learnList('gk_categories', name); catNew.classList.add('hidden');
+      renderCatChips(name); updItems(name); toggleBlocks(name);
+    };
+    root.querySelector('#cat-new-add').onclick = addCat;
+    catNewIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addCat(); } });
+
+    // Udhaar par "Paid from (account)" chhupao — abhi kisi account se paisa nahi gaya
+    const toggleAccount = (mode) => { root.querySelector('#account-field').classList.toggle('hidden', mode === 'Udhaar'); };
+
+    renderCatChips(t.category);
     updItems(t.category); toggleBlocks(t.category);
-    bindChips(root, 'cat', (v) => { updItems(v); toggleBlocks(v); });
-    bindChips(root, 'mode');
+    bindChips(root, 'mode', (m) => toggleAccount(m));
+    toggleAccount(t.payment_mode);
 
     const qty = root.querySelector('#f-qty'), rate = root.querySelector('#f-rate'), amount = root.querySelector('#f-amount'), prev = root.querySelector('#amt-prev');
     const itemEl = root.querySelector('#f-item'), unitEl = root.querySelector('#f-unit');
@@ -801,11 +830,12 @@ function openOutForm(existing) {
     if (existing) root.querySelector('#del').onclick = () => confirmDelete(t);
     root.querySelector('#save').onclick = async () => {
       const cat = chipVal(root, 'cat');
+      const mode = chipVal(root, 'mode');
       const rec = {
         id: t.id, type: 'Out', date: root.querySelector('#f-date').value || today(),
         category: cat, amount: parseFloat(amount.value) || 0,
-        account_id: root.querySelector('#f-account').value || null,
-        payment_mode: chipVal(root, 'mode'),
+        account_id: mode === 'Udhaar' ? null : (root.querySelector('#f-account').value || null),
+        payment_mode: mode,
         vendor: root.querySelector('#f-vendor').value.trim() || null,
         notes: root.querySelector('#f-notes').value.trim() || null,
         item: null, qty: null, unit: null, rate: null, contract_id: null
@@ -835,7 +865,8 @@ function openInForm(existing) {
     <div class="field"><label>${tr('Received in (account)', 'Kahan aaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
     <div class="field"><label>${tr('Amount ₹', 'Amount ₹')}</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
     <div class="field"><label>${tr('Source (where from)', 'Kahan se aaya (source)')}</label>${chipsHtml('src', SOURCES, t.source)}</div>
-    <div class="field"><label>${tr('From whom (name, optional)', 'Kisse (naam, optional)')}</label><input id="f-from" value="${esc(t.from_party || '')}" placeholder="${tr('person / bank', 'aadmi / bank')}" /></div>
+    <div class="field"><label>${tr('From whom (name, optional)', 'Kisse (naam, optional)')}</label><input id="f-from" list="dl-from" value="${esc(t.from_party || '')}" placeholder="${tr('person / bank', 'aadmi / bank')}" />
+      <datalist id="dl-from">${learned('gk_from').map((v) => `<option>${esc(v)}</option>`).join('')}</datalist></div>
     <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
     <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="f-notes">${esc(t.notes || '')}</textarea></div>
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
@@ -856,6 +887,7 @@ function openInForm(existing) {
         notes: root.querySelector('#f-notes').value.trim() || null
       };
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
+      learnList('gk_from', rec.from_party);
       await saveTx(rec, !existing); closeSheet();
     };
   });
