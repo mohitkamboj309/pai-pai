@@ -44,6 +44,19 @@ button { cursor: pointer; border: none; background: none; transition: transform 
 a { color: var(--green-2); }
 h1, h2, h3, h4 { letter-spacing: -0.02em; }
 
+/* Title Case for UI chrome (display only — underlying text/values unchanged) */
+.app-header .sub, .screen h2.title, .sheet h3, .report-card h4,
+.field > label, .bal-card .label, .stat .label,
+.action-btn, .btn-primary, .btn-secondary, .btn-ghost,
+.chip, .nav-item, .seg-toggle button,
+.legend-item .lg-k, .rrow .k, .entry .ttl, .total-line {
+  text-transform: capitalize;
+}
+/* keep natural: sentences, user-typed data, amounts */
+.muted, .lead, .amt-preview, .empty, .toast,
+.entry .meta, .rrow .v, .bal-card .amt, .stat .amt,
+.field input, .field select, .field textarea { text-transform: none; }
+
 .hidden { display: none !important; }
 
 /* ---------- App header ---------- */
