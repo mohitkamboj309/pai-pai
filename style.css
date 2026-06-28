@@ -222,6 +222,11 @@ body.kb-open .bottom-nav { transform: translateY(150%); }
 .chip.active { background: var(--green); color: #fff; border-color: var(--green); box-shadow: 0 4px 12px rgba(15,81,50,.22); }
 .chip.sm { padding: 7px 12px; font-size: 13px; font-weight: 600; }
 .chip.cat-add { border-style: dashed; border-color: var(--green-2); color: var(--green); }
+.chips.recent { margin-top: 8px; gap: 6px; }
+.chips.recent .chip { background: var(--green-soft); border-color: transparent; color: var(--green); font-weight: 600; }
+.chips.recent:empty { display: none; }
+.more-toggle { width: 100%; text-align: center; color: var(--green); font-weight: 700; font-size: 14px; padding: 12px; margin-top: 6px; border-radius: var(--radius-sm); background: var(--green-soft); }
+.more-toggle:active { transform: scale(.99); }
 
 .amt-preview { font-size: 13px; color: var(--muted); margin: 7px 2px 0; font-weight: 500; }
 .amt-preview b { color: var(--green); font-size: 15px; font-weight: 800; }
