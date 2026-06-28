@@ -1,5 +1,5 @@
 /* ===================================================================
-   Ghar Kharcha — app logic (vanilla JS, offline-first, Supabase cloud)
+   Pai-Pai — app logic (vanilla JS, offline-first, Supabase cloud)
    =================================================================== */
 'use strict';
 
@@ -265,7 +265,7 @@ function buildShell() {
   app().innerHTML = `
     <header class="app-header">
       <div>
-        <h1>Ghar Kharcha</h1>
+        <h1>Pai-Pai</h1>
         <div class="sub" id="hdr-sub">Hisaab kitaab</div>
       </div>
       <div id="sync-badge"></div>
@@ -546,7 +546,7 @@ function screenSettings() {
       <div class="section-label">Account</div>
       <div class="muted" style="margin:0 2px 8px">Logged in: ${esc(email || '—')}</div>
       <button class="btn-ghost" id="logout">🚪 Logout</button>
-      <div class="center muted mt16">Ghar Kharcha · v1</div>
+      <div class="center muted mt16">Pai-Pai · v1</div>
     </div>`;
 
   const bind = () => {
@@ -936,11 +936,11 @@ function exportCSV() {
     v = v == null ? '' : String(v);
     return '"' + v.replace(/"/g, '""') + '"';
   }).join(','));
-  download('ghar-kharcha-' + today() + '.csv', '﻿' + head + '\n' + rows.join('\n'), 'text/csv;charset=utf-8');
+  download('pai-pai-' + today() + '.csv', '﻿' + head + '\n' + rows.join('\n'), 'text/csv;charset=utf-8');
   toast('CSV download ho gaya');
 }
 function exportJSON() {
-  download('ghar-kharcha-backup-' + today() + '.json', JSON.stringify({ accounts: state.accounts, contracts: state.contracts, transactions: state.transactions, exported: today() }, null, 2), 'application/json');
+  download('pai-pai-backup-' + today() + '.json', JSON.stringify({ accounts: state.accounts, contracts: state.contracts, transactions: state.transactions, exported: today() }, null, 2), 'application/json');
   toast('Backup download ho gaya');
 }
 
@@ -979,8 +979,8 @@ function renderAuth() {
   app().innerHTML = `
     <div class="auth-wrap">
       <img class="auth-logo" src="icons/icon-192.png" alt="logo" />
-      <h1>Ghar Kharcha</h1>
-      <p class="lead">Ghar banane ka pura hisaab — ek jagah, safe cloud me.</p>
+      <h1>Pai-Pai</h1>
+      <p class="lead">Ghar banane ka pura hisaab — pai-pai ka, ek jagah safe cloud me.</p>
       ${body}
       <p class="muted mt16">Aapka data sirf aapko dikhega.</p>
     </div>`;

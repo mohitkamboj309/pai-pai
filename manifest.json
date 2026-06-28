@@ -1,7 +1,7 @@
 {
-  "name": "Ghar Kharcha",
-  "short_name": "Ghar Kharcha",
-  "description": "Ghar banane ka pura hisaab — kharcha, cashbook aur reports.",
+  "name": "Pai-Pai",
+  "short_name": "Pai-Pai",
+  "description": "Pai-Pai — ghar banane ka pura hisaab: kharcha, cashbook aur reports.",
   "start_url": "./index.html",
   "scope": "./",
   "display": "standalone",

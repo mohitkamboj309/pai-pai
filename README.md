@@ -1,10 +1,11 @@
-# 🏠 Ghar Kharcha
+# 🏠 Pai-Pai
 
-Ghar banane ka **pura hisaab** — kharcha (material/labour/theka/misc), **cashbook**
-(cash-in-hand + bank balance, paisa kahan se aaya / kise gaya), aur **reports** — sab ek jagah.
-Phone par app jaisa, kahin se bhi entry, **offline bhi chalega**, data **cloud me safe**.
+Ghar banane ka **pura hisaab** — pai-pai ka. Kharcha (material/labour/theka/architect/misc),
+**cashbook** (cash-in-hand + bank balance, paisa kahan se aaya / kise gaya), aur **reports** —
+sab ek jagah. Phone par app jaisa, kahin se bhi entry, **offline bhi chalega**, data **cloud me safe**.
 
 > iPhone ke liye banaya gaya hai (Android/laptop par bhi chalega).
+> **Live:** https://mohitkamboj309.github.io/pai-pai/ · **Hosting:** GitHub Pages.
 
 ---
 
@@ -37,18 +38,14 @@ Taaki login ke waqt email me **code** aaye (link nahi — iPhone app ke liye beh
    - **anon public** key (lambi `eyJ...` wali — *service_role* mat lena)
 3. Ye dono app ke pehle screen (ya **Settings → Cloud**) me paste karke save kar dena.
 
-### Step 4 — App ko phone par chalana (host karo)
-App ek static website hai, isे internet par daalna hai (free):
+### Step 4 — App ko phone par chalana (host)
+App **GitHub Pages** par host hai (free) — live URL:
+**https://mohitkamboj309.github.io/pai-pai/**
 
-**Sabse aasaan — Netlify Drop (bina CLI):**
-1. [app.netlify.com/drop](https://app.netlify.com/drop) kholo (free account banao).
-2. Apne computer se **poora `ghar-kharcha` folder** us page par **drag-and-drop** kar do.
-3. Kuch second me ek **URL** mil jayega (jaise `https://ghar-kharcha-xy.netlify.app`).
-
-(Vercel, Cloudflare Pages, ya GitHub Pages bhi chalega — koi bhi static host.)
+(Repo: https://github.com/mohitkamboj309/pai-pai — `git push` karte hi site apne aap update.)
 
 ### iPhone par install
-1. Wo URL **Safari** me kholo.
+1. Live URL **Safari** me kholo.
 2. Email daalo → email me aaye **6-digit code** se login karo.
 3. Safari me niche **Share** (⬆️) → **Add to Home Screen** → **Add**.
 4. Ab home screen par 🏠 icon se app khulega — bilkul app jaisa.
@@ -83,8 +80,8 @@ App ek static website hai, isे internet par daalna hai (free):
 ---
 
 ## 🔁 App update karna
-Agar code badle, to `ghar-kharcha` folder dobara **Netlify Drop** par daal do (same site).
-`sw.js` me `CACHE` version (`v1` → `v2`) badha dene se purana cache hat jata hai.
+Code badle to repo me **`git push`** karo — GitHub Pages site apne aap update ho jati hai.
+`sw.js` me `CACHE` version badha dene se (`pai-pai-v1` → `v2`) purana cache hat jata hai.
 
 ## 🔒 Privacy
 Data sirf aapke Supabase project me hai, aur **Row-Level Security** se sirf aapke login ko
