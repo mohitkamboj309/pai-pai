@@ -964,7 +964,7 @@ function renderAuth() {
   } else {
     body = `
       <div class="auth-card">
-        <p class="muted">Email aur password se login. Pehli baar ho to neeche <b>"Naya account banao"</b> dabao.</p>
+        <p class="muted">Email aur password se login karein. Pehli baar? Niche <b>"Naya account banao"</b>.</p>
         <div class="field"><label>Email</label><input id="au-email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="aap@example.com" value="${esc(state.authEmail)}" /></div>
         <div class="field"><label>Password</label><input id="au-pass" type="password" autocapitalize="off" autocorrect="off" autocomplete="current-password" placeholder="kam se kam 6 character" /></div>
         <button class="btn-primary" id="au-login">Login</button>
@@ -977,9 +977,9 @@ function renderAuth() {
     <div class="auth-wrap">
       <img class="auth-logo" src="icons/icon-192.png" alt="logo" />
       <h1>Pai-Pai</h1>
-      <p class="lead">Ghar banane ka pura hisaab — pai-pai ka, ek jagah safe cloud me.</p>
+      <p class="lead">Ghar banane ka pura hisaab — har pai ka, ek surakshit jagah.</p>
       ${body}
-      <p class="muted mt16">Aapka data sirf aapko dikhega.</p>
+      <p class="muted mt16">🔒 Aapka data surakshit — sirf aapko dikhega.</p>
     </div>`;
 
   if (state.authStep === 'config') {
