@@ -106,6 +106,22 @@ function queueGet() { try { return JSON.parse(localStorage.getItem('gk_pending')
 function queueSet(q) { localStorage.setItem('gk_pending', JSON.stringify(q)); }
 function enqueue(op) { const q = queueGet(); q.push(op); queueSet(q); }
 function pendingCount() { return queueGet().length; }
+// Server fetch ke baad bhi jo writes sync nahi hui (queue me padi hain) unhe rows me wapas mila do,
+// warna user ki abhi-ki entry server-data se mit jaati thi (dikhna band ho jaati thi).
+function mergePending(table, rows) {
+  const q = queueGet().filter((op) => op.table === table);
+  if (!q.length) return rows;
+  let out = rows.slice();
+  for (const op of q) {
+    if (op.type === 'upsert' && op.row) {
+      const i = out.findIndex((r) => r.id === op.row.id);
+      if (i >= 0) out[i] = op.row; else out.unshift(op.row);
+    } else if (op.type === 'delete') {
+      out = out.filter((r) => r.id !== op.id);
+    }
+  }
+  return out;
+}
 
 function learnList(key, value) {
   if (!value) return; value = String(value).trim(); if (!value) return;
@@ -205,9 +221,9 @@ async function loadAll() {
         sb.from('contracts').select('*').order('created_at', { ascending: true }),
         sb.from('transactions').select('*').order('date', { ascending: false }).order('created_at', { ascending: false })
       ]);
-      if (!a.error && a.data) { state.accounts = a.data; cacheSet('accounts', a.data); }
-      if (!c.error && c.data) { state.contracts = c.data; cacheSet('contracts', c.data); }
-      if (!t.error && t.data) { state.transactions = t.data; cacheSet('transactions', t.data); }
+      if (!a.error && a.data) { state.accounts = mergePending('accounts', a.data); cacheSet('accounts', state.accounts); }
+      if (!c.error && c.data) { state.contracts = mergePending('contracts', c.data); cacheSet('contracts', state.contracts); }
+      if (!t.error && t.data) { state.transactions = mergePending('transactions', t.data); cacheSet('transactions', state.transactions); }
       if (state.accounts.length === 0) { await ensureDefaultAccounts(); }
     } catch (e) { console.warn('load error', e); }
   }
@@ -244,6 +260,8 @@ function accTracked(a) { return !(((a && a.notes) || '').includes('[[notrack]]')
 function anyTracked(type) { return state.accounts.some((a) => a.type === type && accTracked(a)); }
 function balByType(type) { return state.accounts.filter((a) => a.type === type && accTracked(a)).reduce((s, a) => s + balanceOf(a.id), 0); }
 function spentViaAccount(id) { return state.transactions.filter((t) => t.type === 'Out' && t.account_id === id && t.payment_mode !== 'Udhaar').reduce((s, t) => s + (Number(t.amount) || 0), 0); }
+// Tracked type me agar koi untracked account bhi ho, uska kharcha card se gayab na ho
+function untrackedSpentByType(type) { return state.accounts.filter((a) => a.type === type && !accTracked(a)).reduce((s, a) => s + spentViaAccount(a.id), 0); }
 function spentByType(type) { const ids = state.accounts.filter((a) => a.type === type).map((a) => a.id); return state.transactions.filter((t) => t.type === 'Out' && ids.includes(t.account_id) && t.payment_mode !== 'Udhaar').reduce((s, t) => s + (Number(t.amount) || 0), 0); }
 
 function inRange(iso) {
@@ -409,8 +427,8 @@ function barSVG(bars) {
 /* ========================= SCREEN: DASHBOARD ====================== */
 function screenDashboard() {
   const cashTracked = anyTracked('Cash'), bankTracked = anyTracked('Bank');
-  const cashVal = cashTracked ? balByType('Cash') : spentByType('Cash');
-  const bankVal = bankTracked ? balByType('Bank') : spentByType('Bank');
+  const cashVal = cashTracked ? balByType('Cash') - untrackedSpentByType('Cash') : spentByType('Cash');
+  const bankVal = bankTracked ? balByType('Bank') - untrackedSpentByType('Bank') : spentByType('Bank');
   const kul = sumOut(); const isMah = sumOut((t) => thisMonth(t.date));
   const udhaar = sumOut((t) => t.payment_mode === 'Udhaar');
   const recent = state.transactions.slice(0, 6);
@@ -662,10 +680,10 @@ function screenSettings() {
 
       <div class="section-label">${tr('Accounts (where money is)', 'Accounts (paisa kahan hai)')}</div>
       <div class="list">
-        ${state.accounts.map((a) => `<div class="entry" data-acc="${a.id}">
+        ${state.accounts.map((a) => { const meta = accTracked(a) ? `${tr('Balance', 'Balance')} ${inr(balanceOf(a.id))}` : `${tr('Spent', 'Gaya')} ${inr(spentViaAccount(a.id))}`; return `<div class="entry" data-acc="${a.id}">
           <div class="ic">${a.type === 'Cash' ? '💵' : '🏦'}</div>
-          <div class="body"><div class="ttl">${esc(a.name)}</div><div class="meta">${a.type} · ${tr('Balance', 'Balance')} ${inr(balanceOf(a.id))}</div></div>
-          <div class="amt">›</div></div>`).join('')}
+          <div class="body"><div class="ttl">${esc(a.name)}</div><div class="meta">${a.type} · ${meta}</div></div>
+          <div class="amt">›</div></div>`; }).join('')}
       </div>
       <button class="btn-secondary" id="add-acc" style="width:100%;margin-top:10px">➕ ${tr('New Account', 'Naya Account')}</button>
 
@@ -710,7 +728,16 @@ function screenSettings() {
       if (!url || !key) return toast(tr('Enter both URL and key', 'URL aur key dono daalein'), true);
       setCfg(url, key); toast(tr('Saved — reloading app', 'Save ho gaya — app reload ho raha hai')); setTimeout(() => location.reload(), 800);
     };
-    $('#logout').onclick = async () => { if (sb) await sb.auth.signOut(); localStorage.removeItem('gk_pending'); location.reload(); };
+    $('#logout').onclick = async () => {
+      // Logout se pehle bin-sync entries bachao — warna offline entry hamesha ke liye chali jaati thi
+      if (pendingCount() > 0 && state.online && sb) { toast(tr('Syncing before logout…', 'Logout se pehle sync…')); await flushQueue(); }
+      if (pendingCount() > 0) {
+        const n = pendingCount();
+        if (!confirm(tr(n + ' entr' + (n > 1 ? 'ies are' : 'y is') + ' not synced yet and will be LOST on logout. Logout anyway?', n + ' entries abhi sync nahi hui — logout par chali jayengi. Fir bhi logout?'))) return;
+      }
+      if (sb) { try { await sb.auth.signOut(); } catch (_) {} }
+      localStorage.removeItem('gk_pending'); location.reload();
+    };
   };
   return { html, bind };
 }
@@ -847,7 +874,8 @@ function openOutForm(existing) {
       if (!isNaN(q) && !isNaN(r)) { prev.innerHTML = `${q} × ${inr(r)} = <b>${inr(q * r)}</b>`; if (!manual) amount.value = (q * r).toFixed(2).replace(/\.00$/, ''); }
       else prev.textContent = '';
     };
-    qty.oninput = calc; rate.oninput = calc; amount.oninput = () => { manual = true; }; calc();
+    // Amount khaali kar diya → wapas qty×rate se auto-calc; warna jo type kiya wahi manual amount
+    qty.oninput = calc; rate.oninput = calc; amount.oninput = () => { manual = amount.value.trim() !== ''; calc(); }; calc();
 
     // Item ke hisaab se unit auto-set (reta/bajri/mitti → Sakda), jab tak user khud unit na badle
     let unitTouched = !!(existing && existing.unit);
@@ -930,7 +958,7 @@ function openOutForm(existing) {
 
 /* ====================== FORM: Paisa Aaya (In) ==================== */
 function openInForm(existing) {
-  const t = existing || { id: uid(), type: 'In', date: today(), source: 'Bank Nikasi', account_id: (state.accounts[0] || {}).id };
+  const t = existing || { id: uid(), type: 'In', date: today(), source: 'Bank Withdrawal', account_id: (state.accounts[0] || {}).id };
   const inner = `
     <h3>${existing ? tr('✏️ Edit money in', '✏️ Aaya edit') : tr('➕ Money In', '➕ Paisa Aaya')}</h3>
     <div class="field"><label>${tr('Received in (account)', 'Kahan aaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
@@ -953,7 +981,7 @@ function openInForm(existing) {
         id: t.id, type: 'In', date: root.querySelector('#f-date').value || today(),
         amount: parseFloat(root.querySelector('#f-amount').value) || 0,
         account_id: root.querySelector('#f-account').value || null,
-        source: chipVal(root, 'src'), from_party: root.querySelector('#f-from').value.trim() || null,
+        source: chipVal(root, 'src') || 'Bank Withdrawal', from_party: root.querySelector('#f-from').value.trim() || null,
         payment_mode: acc && acc.type === 'Cash' ? 'Cash' : 'Net Banking',
         notes: root.querySelector('#f-notes').value.trim() || null
       };
@@ -1095,10 +1123,13 @@ function openThekaForm(existing) {
   openSheet(inner, (root) => {
     // Sq-ft calculator: ground × rate + 1st × rate → theka amount auto
     const gArea = root.querySelector('#t-g-area'), gRate = root.querySelector('#t-g-rate'), fArea = root.querySelector('#t-f-area'), fRate = root.querySelector('#t-f-rate'), amtEl = root.querySelector('#t-amt'), sqPrev = root.querySelector('#t-sqft-prev');
-    const calcSqft = () => {
+    // writeAmt=true par hi amount field bharte hain. Reopen par sirf preview dikhana hai (warna user ka
+    // manually badla hua theka_amount sq-ft total se overwrite ho jaata tha). Live input par event aata
+    // hai (truthy) → amount bharo; restore par calcSqft(false) → sirf preview.
+    const calcSqft = (writeAmt = true) => {
       const ga = parseFloat(gArea.value) || 0, gr = parseFloat(gRate.value) || 0, fa = parseFloat(fArea.value) || 0, fr = parseFloat(fRate.value) || 0;
       if (!ga && !fa) { sqPrev.textContent = ''; return; }
-      const total = ga * gr + fa * fr; amtEl.value = total;
+      const total = ga * gr + fa * fr; if (writeAmt) amtEl.value = total;
       sqPrev.innerHTML = `${ga ? ga + '×₹' + gr : ''}${ga && fa ? ' + ' : ''}${fa ? fa + '×₹' + fr : ''} = <b>${inr(total)}</b>`;
     };
     gArea.oninput = calcSqft; gRate.oninput = calcSqft; fArea.oninput = calcSqft; fRate.oninput = calcSqft;
@@ -1108,7 +1139,7 @@ function openThekaForm(existing) {
       if (sp.sqft.gr != null) gRate.value = sp.sqft.gr;
       if (sp.sqft.fa != null) fArea.value = sp.sqft.fa;
       if (sp.sqft.fr != null) fRate.value = sp.sqft.fr;
-      calcSqft();
+      calcSqft(false);   // sirf preview — stored theka_amount ko mat chhedo
     }
 
     root.querySelector('#cancel').onclick = closeSheet;
@@ -1263,17 +1294,18 @@ function openImportForm() {
 
 // Saari entries + thekas delete (accounts rehne do). Cloud se bhi hata do.
 async function clearAllData() {
+  // Offline me clear mat karo — server pe data reh jaata aur agle sync par wapas aa jaata tha
+  if (!sb || !state.online) return toast(tr('Connect to internet to clear data', 'Data clear karne ke liye internet zaroori'), true);
   if (!confirm(tr('Delete ALL entries and thekas? This cannot be undone.', 'Saari entries aur thekas delete kar du? Wapas nahi aayenge.'))) return;
   state.transactions = []; state.contracts = [];
   cacheSet('transactions', []); cacheSet('contracts', []);
-  localStorage.removeItem('gk_pending');
+  // Sirf in dono table ke pending ops hatao — accounts ke bin-sync writes reh jaayein
+  queueSet(queueGet().filter((op) => op.table !== 'transactions' && op.table !== 'contracts'));
   refresh();
-  if (sb && state.online) {
-    try {
-      await sb.from('transactions').delete().eq('user_id', userId());
-      await sb.from('contracts').delete().eq('user_id', userId());
-    } catch (e) { console.warn('clear', e); }
-  }
+  try {
+    await sb.from('transactions').delete().eq('user_id', userId());
+    await sb.from('contracts').delete().eq('user_id', userId());
+  } catch (e) { console.warn('clear', e); }
   toast(tr('All data cleared', 'Sab data clear ho gaya'));
 }
 

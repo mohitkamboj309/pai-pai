@@ -1,6 +1,6 @@
 // Pai-Pai — service worker (offline app shell)
 // Jab bhi app files badlein, CACHE version badha dena (v1 -> v2 ...).
-const CACHE = 'pai-pai-v17';
+const CACHE = 'pai-pai-v18';
 const SHELL = [
   './',
   './index.html',
