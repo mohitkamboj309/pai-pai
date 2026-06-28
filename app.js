@@ -229,6 +229,12 @@ function balanceOf(accId) {
   return b;
 }
 function totalByType(type) { return state.accounts.filter((a) => a.type === type).reduce((s, a) => s + balanceOf(a.id), 0); }
+// Account ka balance track karna hai ya nahi (Bank ke liye user OFF kar sakta)
+function accTracked(a) { return !(((a && a.notes) || '').includes('[[notrack]]')); }
+function anyTracked(type) { return state.accounts.some((a) => a.type === type && accTracked(a)); }
+function balByType(type) { return state.accounts.filter((a) => a.type === type && accTracked(a)).reduce((s, a) => s + balanceOf(a.id), 0); }
+function spentViaAccount(id) { return state.transactions.filter((t) => t.type === 'Out' && t.account_id === id && t.payment_mode !== 'Udhaar').reduce((s, t) => s + (Number(t.amount) || 0), 0); }
+function spentByType(type) { const ids = state.accounts.filter((a) => a.type === type).map((a) => a.id); return state.transactions.filter((t) => t.type === 'Out' && ids.includes(t.account_id) && t.payment_mode !== 'Udhaar').reduce((s, t) => s + (Number(t.amount) || 0), 0); }
 
 function inRange(iso) {
   if (state.filterRange === 'all') return true;
@@ -392,7 +398,9 @@ function barSVG(bars) {
 
 /* ========================= SCREEN: DASHBOARD ====================== */
 function screenDashboard() {
-  const cash = totalByType('Cash'), bank = totalByType('Bank');
+  const cashTracked = anyTracked('Cash'), bankTracked = anyTracked('Bank');
+  const cashVal = cashTracked ? balByType('Cash') : spentByType('Cash');
+  const bankVal = bankTracked ? balByType('Bank') : spentByType('Bank');
   const kul = sumOut(); const isMah = sumOut((t) => thisMonth(t.date));
   const udhaar = sumOut((t) => t.payment_mode === 'Udhaar');
   const recent = state.transactions.slice(0, 6);
@@ -404,8 +412,8 @@ function screenDashboard() {
   const html = `
     <div class="screen">
       <div class="balance-row">
-        <div class="bal-card cash"><div class="label">💵 ${tr('Cash in hand', 'Cash haath me')}</div><div class="amt">${inr(cash)}</div></div>
-        <div class="bal-card bank"><div class="label">🏦 ${tr('In bank', 'Bank me')}</div><div class="amt">${inr(bank)}</div></div>
+        <div class="bal-card cash"><div class="label">💵 ${cashTracked ? tr('Cash in hand', 'Cash haath me') : tr('Cash spent', 'Cash se gaya')}</div><div class="amt">${inr(cashVal)}</div></div>
+        <div class="bal-card bank"><div class="label">🏦 ${bankTracked ? tr('In bank', 'Bank me') : tr('Bank spent', 'Bank se gaya')}</div><div class="amt">${inr(bankVal)}</div></div>
       </div>
       <div class="stat-row">
         <div class="stat"><div class="label">${tr('Total spent', 'Kul kharcha')}</div><div class="amt spend">${inr(kul)}</div></div>
@@ -498,6 +506,7 @@ function screenEntries() {
       <div class="filter-chips" id="ef-chips">
         ${['all', 'Out', 'In', 'Transfer'].map((ty) => `<button class="chip sm ${entryFilter.type === ty ? 'active' : ''}" data-t="${ty}">${({ all: tr('All', 'Sab'), Out: tr('Expense', 'Kharcha'), In: tr('In', 'Aaya'), Transfer: tr('Transfer', 'Transfer') })[ty]}</button>`).join('')}
       </div>
+      <div id="ef-sum" class="ef-sum"></div>
       <div class="list" id="ef-list"></div>
     </div>`;
   const bind = () => {
@@ -506,6 +515,12 @@ function screenEntries() {
       if (entryFilter.type !== 'all') rows = rows.filter((t) => t.type === entryFilter.type);
       const q = entryFilter.q.trim().toLowerCase();
       if (q) rows = rows.filter((t) => [t.item, t.vendor, t.notes, t.source, t.from_party, t.category].some((x) => (x || '').toLowerCase().includes(q)));
+      const out = rows.filter((t) => t.type === 'Out').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+      const inn = rows.filter((t) => t.type === 'In').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+      const bits = [`${rows.length} ${tr('entries', 'entries')}`];
+      if (out) bits.push(`<b style="color:var(--red)">${tr('Gaya', 'Gaya')} ${inr(out)}</b>`);
+      if (inn) bits.push(`<b style="color:var(--green)">${tr('Aaya', 'Aaya')} ${inr(inn)}</b>`);
+      $('#ef-sum').innerHTML = rows.length ? bits.join(' · ') : '';
       $('#ef-list').innerHTML = rows.length ? rows.map(entryRow).join('') : emptyState(tr('Nothing found', 'Kuch nahi mila'));
       bindEntryRows();
     };
@@ -561,7 +576,7 @@ function screenReports() {
 
       <div class="report-card">
         <h4>💼 ${tr('Account Balances (now)', 'Account Balances (abhi)')}</h4>
-        ${state.accounts.map((a) => `<div class="rrow"><div class="k">${a.type === 'Cash' ? '💵' : '🏦'} ${esc(a.name)}</div><div class="v">${inr(balanceOf(a.id))}</div></div>`).join('') || `<div class="muted">${tr('No account', 'Koi account nahi')}</div>`}
+        ${state.accounts.map((a) => { const tk = accTracked(a); const v = tk ? inr(balanceOf(a.id)) : `<span class="muted" style="font-weight:600">${tr('Spent', 'Gaya')} ${inr(spentViaAccount(a.id))}</span>`; return `<div class="rrow"><div class="k">${a.type === 'Cash' ? '💵' : '🏦'} ${esc(a.name)}</div><div class="v">${v}</div></div>`; }).join('') || `<div class="muted">${tr('No account', 'Koi account nahi')}</div>`}
       </div>
 
       <div class="report-card">
@@ -1069,11 +1084,13 @@ function openAccountForm(existing) {
     <div class="field"><label>${tr('Name', 'Naam')}</label><input id="a-name" value="${esc(a.name || '')}" placeholder="${tr('e.g. HDFC Bank / Cash', 'jaise HDFC Bank / Cash')}" /></div>
     <div class="field"><label>${tr('Type', 'Type')}</label>${chipsHtml('atype', ['Cash', 'Bank'], a.type)}</div>
     <div class="field"><label>${tr('Opening balance ₹ (initial amount)', 'Opening balance ₹ (shuru me kitna tha)')}</label><input id="a-open" type="number" inputmode="decimal" step="any" value="${a.opening_balance ?? 0}" /></div>
+    <div class="field"><label>${tr('Track running balance?', 'Iska balance track karu?')}</label>${chipsHtml('track', ['Yes', 'No'], accTracked(a) ? 'Yes' : 'No')}
+      <div class="muted" style="margin-top:6px">${tr('Turn OFF for bank if you only log payments — no balance is shown, just total spent.', 'Bank ke liye OFF rakho agar sirf payment log karne hain — balance nahi dikhega, sirf total gaya.')}</div></div>
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
     ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
-    bindChips(root, 'atype');
+    bindChips(root, 'atype'); bindChips(root, 'track');
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = async () => {
       if (state.transactions.some((t) => t.account_id === a.id || t.to_account_id === a.id)) return toast(tr('This account has entries — remove them first', 'Is account me entries hain, pehle hatao'), true);
@@ -1081,7 +1098,7 @@ function openAccountForm(existing) {
       await deleteRow('accounts', a.id); closeSheet(); refresh(); toast(tr('Account deleted', 'Account delete'));
     };
     root.querySelector('#save').onclick = async () => {
-      const rec = { id: a.id, user_id: userId(), name: root.querySelector('#a-name').value.trim() || 'Account', type: chipVal(root, 'atype'), opening_balance: parseFloat(root.querySelector('#a-open').value) || 0 };
+      const rec = { id: a.id, user_id: userId(), name: root.querySelector('#a-name').value.trim() || 'Account', type: chipVal(root, 'atype'), opening_balance: parseFloat(root.querySelector('#a-open').value) || 0, notes: chipVal(root, 'track') === 'No' ? '[[notrack]]' : null };
       const i = state.accounts.findIndex((x) => x.id === a.id);
       if (i >= 0) state.accounts[i] = rec; else state.accounts.push(rec);
       cacheSet('accounts', state.accounts);
