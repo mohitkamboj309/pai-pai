@@ -137,6 +137,10 @@ function rbSet(item, vendor, rate) {
   localStorage.setItem('gk_ratebook', JSON.stringify(book));
 }
 
+// Smart defaults: har category ka last-used account + mode (sirf pre-fill, editable)
+function catDefault(cat) { try { return (JSON.parse(localStorage.getItem('gk_def') || '{}'))[cat] || null; } catch (_) { return null; } }
+function setCatDefault(cat, acc, mode) { if (!cat) return; let d; try { d = JSON.parse(localStorage.getItem('gk_def') || '{}'); } catch (_) { d = {}; } d[cat] = { acc: acc || null, mode: mode || null }; localStorage.setItem('gk_def', JSON.stringify(d)); }
+
 /* --------------------------- Supabase ----------------------------- */
 function initClient() {
   const c = getCfg(); if (!c || !c.url || !c.key) return false;
@@ -665,13 +669,17 @@ function screenSettings() {
         <button class="btn-secondary" id="exp-csv">⬇️ CSV</button>
       </div>
       <button class="btn-secondary" id="sync-now" style="width:100%;margin-top:8px">🔄 ${tr('Sync now', 'Abhi Sync karo')}</button>
-      <button class="btn-secondary" id="import-btn" style="width:100%;margin-top:8px">📥 ${tr('Import entries (JSON)', 'Entries import (JSON)')}</button>
-      <button class="btn-ghost" id="clear-all" style="width:100%;margin-top:8px;color:var(--red);border-color:#f3c9c4">🗑️ ${tr('Clear all data', 'Sab data clear karo')}</button>
 
-      <div class="section-label">${tr('Cloud (Supabase)', 'Cloud (Supabase)')}</div>
-      <div class="field"><label>${tr('Project URL', 'Project URL')}</label><input id="cfg-url" value="${esc(c.url)}" placeholder="https://xxxx.supabase.co" autocapitalize="off" autocorrect="off" /></div>
-      <div class="field"><label>${tr('Anon public key', 'Anon public key')}</label><input id="cfg-key" value="${esc(c.key)}" placeholder="eyJ..." autocapitalize="off" autocorrect="off" /></div>
-      <button class="btn-secondary" id="save-cfg" style="width:100%">💾 ${tr('Save cloud config', 'Cloud config save')}</button>
+      <details class="adv">
+        <summary>⚙️ ${tr('Advanced', 'Advanced')}</summary>
+        <button class="btn-secondary" id="import-btn" style="width:100%;margin-top:10px">📥 ${tr('Import entries (JSON)', 'Entries import (JSON)')}</button>
+        <button class="btn-ghost" id="clear-all" style="width:100%;margin-top:8px;color:var(--red);border-color:#f3c9c4">🗑️ ${tr('Clear all data', 'Sab data clear karo')}</button>
+        ${!cfgValid() ? `
+        <div class="section-label">${tr('Cloud (Supabase)', 'Cloud (Supabase)')}</div>
+        <div class="field"><label>${tr('Project URL', 'Project URL')}</label><input id="cfg-url" value="${esc(c.url)}" placeholder="https://xxxx.supabase.co" autocapitalize="off" autocorrect="off" /></div>
+        <div class="field"><label>${tr('Anon public key', 'Anon public key')}</label><input id="cfg-key" value="${esc(c.key)}" placeholder="eyJ..." autocapitalize="off" autocorrect="off" /></div>
+        <button class="btn-secondary" id="save-cfg" style="width:100%">💾 ${tr('Save cloud config', 'Cloud config save')}</button>` : ''}
+      </details>
 
       <div class="section-label">${tr('Account', 'Account')}</div>
       <div class="muted" style="margin:0 2px 8px">${tr('Logged in', 'Logged in')}: ${esc(email || '—')}</div>
@@ -690,7 +698,8 @@ function screenSettings() {
     $('#sync-now').onclick = async () => { toast(tr('Syncing…', 'Sync…')); await flushQueue(); await loadAll(); refresh(); toast(tr('Done', 'Ho gaya')); };
     $('#import-btn').onclick = openImportForm;
     $('#clear-all').onclick = clearAllData;
-    $('#save-cfg').onclick = () => {
+    const sc = $('#save-cfg');
+    if (sc) sc.onclick = () => {
       const url = $('#cfg-url').value, key = $('#cfg-key').value;
       if (!url || !key) return toast(tr('Enter both URL and key', 'URL aur key dono daalein'), true);
       setCfg(url, key); toast(tr('Saved — reloading app', 'Save ho gaya — app reload ho raha hai')); setTimeout(() => location.reload(), 800);
@@ -723,16 +732,20 @@ function bindChips(root, name, onPick) {
   });
 }
 function chipVal(root, name) { const a = root.querySelector(`[data-chips="${name}"] .chip.active`); return a ? a.dataset.val : null; }
+function setChip(root, name, value) { const w = root.querySelector(`[data-chips="${name}"]`); if (w) w.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', c.dataset.val === value)); }
 function accOptions(selId) { return state.accounts.map((a) => `<option value="${a.id}" ${a.id === selId ? 'selected' : ''}>${esc(a.name)}</option>`).join(''); }
 
 /* ====================== FORM: Kharcha (Out) ====================== */
 function openOutForm(existing) {
-  const t = existing || { id: uid(), type: 'Out', date: today(), category: 'Material', payment_mode: 'Cash', account_id: (state.accounts[0] || {}).id };
+  // isEdit = sach me purani saved entry (Repeat me clone ka naya id hota hai → new entry)
+  const isEdit = !!(existing && state.transactions.some((x) => x.id === existing.id));
+  const md = catDefault('Material') || {};
+  const t = existing || { id: uid(), type: 'Out', date: today(), category: 'Material', payment_mode: md.mode || 'Cash', account_id: (md.acc && state.accounts.some((a) => a.id === md.acc)) ? md.acc : (state.accounts[0] || {}).id };
   const itemsDL = 'dl-items';
   // Purani entry ka unit agar list me na ho to bhi use option me rakho (warna save par chup-chaap badal jata)
   const unitOpts = (t.unit && !UNITS.includes(t.unit)) ? [t.unit, ...UNITS] : UNITS;
   const inner = `
-    <h3>${existing ? tr('✏️ Edit expense', '✏️ Kharcha edit') : tr('➖ New Expense', '➖ Naya Kharcha')}</h3>
+    <h3>${isEdit ? tr('✏️ Edit expense', '✏️ Kharcha edit') : tr('➖ New Expense', '➖ Naya Kharcha')}</h3>
     <div class="field"><label>${tr('Category', 'Category')}</label>
       <div class="chips" data-chips="cat" id="cat-chips"></div>
       <div id="cat-new" class="hidden" style="display:flex;gap:8px;margin-top:8px">
@@ -771,7 +784,7 @@ function openOutForm(existing) {
     <div class="field"><label>${tr('Note (optional)', 'Note (optional)')}</label><textarea id="f-notes" placeholder="${tr('any detail…', 'koi detail…')}">${esc(t.notes || '')}</textarea></div>
 
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
-    ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
+    ${isEdit ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>
   `;
   openSheet(inner, (root) => {
@@ -788,7 +801,7 @@ function openOutForm(existing) {
       const wrap = root.querySelector('#cat-chips');
       wrap.innerHTML = allCats().map((c) => `<button type="button" class="chip ${c === selected ? 'active' : ''}" data-val="${esc(c)}">${esc(c)}</button>`).join('')
         + `<button type="button" class="chip cat-add" id="cat-add">+ ${tr('New', 'Naya')}</button>`;
-      wrap.querySelectorAll('.chip[data-val]').forEach((c) => c.onclick = () => { catNew.classList.add('hidden'); renderCatChips(c.dataset.val); updItems(c.dataset.val); toggleBlocks(c.dataset.val); });
+      wrap.querySelectorAll('.chip[data-val]').forEach((c) => c.onclick = () => { catNew.classList.add('hidden'); renderCatChips(c.dataset.val); updItems(c.dataset.val); toggleBlocks(c.dataset.val); if (!isEdit) applyCatDefault(c.dataset.val); });
       root.querySelector('#cat-add').onclick = () => { catNew.classList.remove('hidden'); catNewIn.value = ''; catNewIn.focus(); };
     };
     const addCat = () => {
@@ -801,6 +814,12 @@ function openOutForm(existing) {
 
     // Udhaar par "Paid from (account)" chhupao — abhi kisi account se paisa nahi gaya
     const toggleAccount = (mode) => { root.querySelector('#account-field').classList.toggle('hidden', mode === 'Udhaar'); };
+    // Smart default: us category ka last-used account + mode pre-fill (editable)
+    const applyCatDefault = (cat) => {
+      const d = catDefault(cat); if (!d) return;
+      if (d.mode) { setChip(root, 'mode', d.mode); toggleAccount(d.mode); }
+      if (d.acc && state.accounts.some((a) => a.id === d.acc)) root.querySelector('#f-account').value = d.acc;
+    };
 
     renderCatChips(t.category);
     updItems(t.category); toggleBlocks(t.category);
@@ -847,7 +866,7 @@ function openOutForm(existing) {
     if (!existing) maybeFillRate();
 
     root.querySelector('#cancel').onclick = closeSheet;
-    if (existing) root.querySelector('#del').onclick = () => confirmDelete(t);
+    if (isEdit) root.querySelector('#del').onclick = () => confirmDelete(t);
     root.querySelector('#save').onclick = async () => {
       const cat = chipVal(root, 'cat');
       const mode = chipVal(root, 'mode');
@@ -872,7 +891,8 @@ function openOutForm(existing) {
       }
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
       learnList('gk_items_' + cat, rec.item); learnList('gk_vendors', rec.vendor);
-      await saveTx(rec, !existing); closeSheet();
+      setCatDefault(cat, rec.account_id, mode);   // is category ka last-used account+mode yaad
+      await saveTx(rec, !isEdit); closeSheet();
     };
   });
 }
@@ -968,6 +988,7 @@ function openEntryDetail(t) {
     <h3>${CAT_ICON[t.category] || (t.type === 'In' ? '💰' : '🔁')} ${tr('Detail', 'Detail')}</h3>
     <div class="report-card">${lines.map(([k, v]) => `<div class="rrow"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>
     ${isUdhaar ? `<button class="btn-primary" id="settle">✅ ${tr('Udhaar paid (mark)', 'Udhaar chukaya (paid mark)')}</button>` : ''}
+    ${t.type === 'Out' ? `<button class="btn-secondary" id="repeat" style="width:100%;margin-top:8px">🔁 ${tr('Repeat (new entry)', 'Dobara — nayi entry')}</button>` : ''}
     <button class="btn-secondary" id="edit" style="width:100%;margin-top:8px">✏️ ${tr('Edit', 'Edit')}</button>
     <button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>
     <button class="btn-ghost" id="cancel">${tr('Close', 'Band karo')}</button>`;
@@ -975,6 +996,8 @@ function openEntryDetail(t) {
     root.querySelector('#cancel').onclick = closeSheet;
     root.querySelector('#del').onclick = () => confirmDelete(t);
     root.querySelector('#edit').onclick = () => { closeSheet(); if (t.type === 'Out') openOutForm(t); else if (t.type === 'In') openInForm(t); else openTransferForm(t); };
+    const rpt = root.querySelector('#repeat');
+    if (rpt) rpt.onclick = () => { closeSheet(); openOutForm(Object.assign({}, t, { id: uid(), date: today(), notes: t.notes && !/\[\[/.test(t.notes) ? t.notes : null })); };
     if (isUdhaar) root.querySelector('#settle').onclick = () => { closeSheet(); openSettleForm(t); };
   });
 }

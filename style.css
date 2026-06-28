@@ -271,6 +271,10 @@ body.kb-open .bottom-nav { transform: translateY(150%); }
 .seg-toggle { display: inline-flex; background: #eef2f0; border-radius: 999px; padding: 3px; gap: 2px; }
 .seg-toggle button { font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 999px; color: var(--muted); }
 .seg-toggle button.on { background: #fff; color: var(--green); box-shadow: var(--shadow-sm); }
+.adv { margin-top: 16px; border-top: 1px solid var(--line); padding-top: 4px; }
+.adv > summary { list-style: none; cursor: pointer; color: var(--muted); font-weight: 700; font-size: 13px; padding: 10px 2px; }
+.adv > summary::-webkit-details-marker { display: none; }
+.adv[open] > summary { color: var(--ink); }
 .donut-wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-top: 4px; }
 .donut { width: 140px; height: 140px; flex: 0 0 auto; }
 .legend { flex: 1; min-width: 170px; display: flex; flex-direction: column; gap: 10px; }
