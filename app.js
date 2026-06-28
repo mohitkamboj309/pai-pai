@@ -649,6 +649,7 @@ function screenSettings() {
         <button class="btn-secondary" id="exp-csv">⬇️ CSV</button>
       </div>
       <button class="btn-secondary" id="sync-now" style="width:100%;margin-top:8px">🔄 ${tr('Sync now', 'Abhi Sync karo')}</button>
+      <button class="btn-secondary" id="import-btn" style="width:100%;margin-top:8px">📥 ${tr('Import entries (JSON)', 'Entries import (JSON)')}</button>
 
       <div class="section-label">${tr('Cloud (Supabase)', 'Cloud (Supabase)')}</div>
       <div class="field"><label>${tr('Project URL', 'Project URL')}</label><input id="cfg-url" value="${esc(c.url)}" placeholder="https://xxxx.supabase.co" autocapitalize="off" autocorrect="off" /></div>
@@ -670,6 +671,7 @@ function screenSettings() {
     $('#exp-json').onclick = exportJSON;
     $('#exp-csv').onclick = exportCSV;
     $('#sync-now').onclick = async () => { toast(tr('Syncing…', 'Sync…')); await flushQueue(); await loadAll(); refresh(); toast(tr('Done', 'Ho gaya')); };
+    $('#import-btn').onclick = openImportForm;
     $('#save-cfg').onclick = () => {
       const url = $('#cfg-url').value, key = $('#cfg-key').value;
       if (!url || !key) return toast(tr('Enter both URL and key', 'URL aur key dono daalein'), true);
@@ -1085,6 +1087,58 @@ function exportCSV() {
 function exportJSON() {
   download('pai-pai-backup-' + today() + '.json', JSON.stringify({ accounts: state.accounts, contracts: state.contracts, transactions: state.transactions, exported: today() }, null, 2), 'application/json');
   toast(tr('Backup downloaded', 'Backup download ho gaya'));
+}
+
+/* ============================== Import ========================== */
+// account ko type ('Cash'/'Bank') se resolve karo (na ho to bana do)
+async function resolveAccount(type) {
+  if (!type) return null;
+  let a = state.accounts.find((x) => x.type === type);
+  if (!a) { a = { id: uid(), user_id: userId(), name: type === 'Bank' ? 'Bank' : 'Cash (haath)', type: type, opening_balance: 0 }; state.accounts.push(a); cacheSet('accounts', state.accounts); await pushRow('accounts', a); }
+  return a.id;
+}
+async function resolveTheka(name, startDate) {
+  if (!name) return null;
+  let c = state.contracts.find((x) => (x.thekedar_name || '').toLowerCase() === name.toLowerCase());
+  if (!c) { c = { id: uid(), user_id: userId(), thekedar_name: name, kaam: 'Mistry / Theka', theka_amount: 0, start_date: startDate || today() }; state.contracts.push(c); cacheSet('contracts', state.contracts); await pushRow('contracts', c); }
+  return c.id;
+}
+function openImportForm() {
+  const inner = `
+    <h3>📥 ${tr('Import entries', 'Entries import')}</h3>
+    <p class="muted" style="margin:0 2px 8px">${tr('Paste the JSON I gave you and tap Import. Run only once.', 'Mera diya JSON paste karke Import dabao. Sirf ek baar chalao.')}</p>
+    <div class="field"><textarea id="imp-json" style="min-height:170px" placeholder='[ {"date":"2026-04-20","category":"Material","vendor":"...","amount":38000,"mode":"Cash","acc":"Cash","note":"..."} ]'></textarea></div>
+    <button class="btn-primary" id="imp-go">📥 ${tr('Import', 'Import')}</button>
+    <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
+  openSheet(inner, (root) => {
+    root.querySelector('#cancel').onclick = closeSheet;
+    root.querySelector('#imp-go').onclick = async () => {
+      let arr;
+      try { arr = JSON.parse(root.querySelector('#imp-json').value); } catch (e) { return toast(tr('Invalid JSON', 'JSON galat hai'), true); }
+      if (!Array.isArray(arr) || !arr.length) return toast(tr('No entries found', 'Koi entry nahi mili'), true);
+      const btn = root.querySelector('#imp-go'); btn.disabled = true; btn.textContent = tr('Importing…', 'Import ho raha…');
+      let n = 0;
+      for (const it of arr) {
+        const amt = Number(it.amount) || 0; if (!(amt > 0)) continue;
+        const accId = it.mode === 'Udhaar' ? null : await resolveAccount(it.acc);
+        const cid = await resolveTheka(it.theka, it.date);
+        const rec = {
+          id: uid(), user_id: userId(), type: it.type || 'Out', date: it.date || today(), amount: amt,
+          category: it.category || null, item: it.item || null,
+          qty: it.qty != null ? Number(it.qty) : null, unit: it.unit || null, rate: it.rate != null ? Number(it.rate) : null,
+          vendor: it.vendor || null, payment_mode: it.mode || null, account_id: accId, contract_id: cid,
+          source: it.source || null, from_party: it.from || null, notes: it.note || null
+        };
+        state.transactions.push(rec); await pushRow('transactions', rec);
+        if (it.vendor) learnList('gk_vendors', it.vendor);
+        if (it.category && !CATEGORIES.includes(it.category)) learnList('gk_categories', it.category);
+        n++;
+      }
+      state.transactions.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created_at || '').localeCompare(a.created_at || ''));
+      cacheSet('transactions', state.transactions);
+      closeSheet(); refresh(); toast(tr(n + ' entries imported ✅', n + ' entries import ho gayi ✅'));
+    };
+  });
 }
 
 /* ============================== AUTH ============================ */
