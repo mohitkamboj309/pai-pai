@@ -40,6 +40,8 @@ const ITEM_UNIT = {
   'Beldaar': 'Din', 'Mazdoor': 'Din', 'Plumber': 'Din', 'Electrician': 'Din',
   'Painter': 'Din', 'Welder': 'Din', 'Carpenter': 'Din', 'Extra Labour': 'Din'
 };
+// Category ka default unit (jab item-specific match na ho) — Labour → Din, Misc → Number
+const CAT_UNIT = { 'Material': 'Sakda', 'Labour': 'Din', 'Misc': 'Number' };
 const DEFAULT_ITEMS = {
   'Material': ['Cement Normal', 'Cement 43', 'Cement', 'Sariya 8mm', 'Sariya 10mm', 'Sariya 12mm', 'Sariya', 'Reta', 'Bajri', 'Coarse Sand', 'Mitti', 'Kade', 'Taar', 'Eint', 'Gitti', 'Pathar', 'Pani', 'Tiles', 'Paint', 'Pipe', 'Wire', 'Switch', 'Darwaza', 'Khidki', 'Grill'],
   'Labour': ['Majdoor 600', 'Majdoor 650', 'Mistry 900', 'Mistry 950', 'Majdoor', 'Mistry', 'Beldaar', 'Plumber', 'Electrician', 'Painter', 'Welder', 'Carpenter', 'Extra Labour'],
@@ -809,7 +811,7 @@ function openOutForm(existing) {
       const wrap = root.querySelector('#cat-chips');
       wrap.innerHTML = allCats().map((c) => `<button type="button" class="chip ${c === selected ? 'active' : ''}" data-val="${esc(c)}">${esc(c)}</button>`).join('')
         + `<button type="button" class="chip cat-add" id="cat-add">+ ${tr('New', 'Naya')}</button>`;
-      wrap.querySelectorAll('.chip[data-val]').forEach((c) => c.onclick = () => { catNew.classList.add('hidden'); renderCatChips(c.dataset.val); updItems(c.dataset.val); toggleBlocks(c.dataset.val); if (!isEdit) applyCatDefault(c.dataset.val); renderRecentItems(c.dataset.val); });
+      wrap.querySelectorAll('.chip[data-val]').forEach((c) => c.onclick = () => { catNew.classList.add('hidden'); renderCatChips(c.dataset.val); updItems(c.dataset.val); toggleBlocks(c.dataset.val); if (!isEdit) applyCatDefault(c.dataset.val); renderRecentItems(c.dataset.val); applyItemUnit(); });
       root.querySelector('#cat-add').onclick = () => { catNew.classList.remove('hidden'); catNewIn.value = ''; catNewIn.focus(); };
     };
     const addCat = () => {
@@ -853,7 +855,9 @@ function openOutForm(existing) {
     const applyItemUnit = () => {
       if (unitTouched) return;
       const k = Object.keys(ITEM_UNIT).find((x) => x.toLowerCase() === itemEl.value.trim().toLowerCase());
-      if (k) unitEl.value = ITEM_UNIT[k];
+      if (k) { unitEl.value = ITEM_UNIT[k]; return; }
+      const cu = CAT_UNIT[chipVal(root, 'cat')];   // item match nahi → category ka default (Labour→Din)
+      if (cu) unitEl.value = cu;
     };
 
     // Rate-book: item (+ shop/vendor) ka pichla rate auto-bhar. User khud rate type kare to app nahi chhedta.
