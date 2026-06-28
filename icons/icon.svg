@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1f7a4d"/>
+      <stop offset="1" stop-color="#0f5132"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bg)"/>
+  <!-- house roof -->
+  <path d="M256 104 L408 224 L104 224 Z" fill="#ffffff"/>
+  <!-- house body -->
+  <rect x="140" y="224" width="232" height="184" rx="12" fill="#ffffff"/>
+  <!-- door / ledger lines -->
+  <rect x="232" y="300" width="48" height="108" rx="8" fill="#0f5132"/>
+  <rect x="168" y="262" width="42" height="42" rx="6" fill="#cfe9da"/>
+  <rect x="302" y="262" width="42" height="42" rx="6" fill="#cfe9da"/>
+  <!-- rupee badge -->
+  <circle cx="372" cy="372" r="78" fill="#f4b400" stroke="#ffffff" stroke-width="10"/>
+  <text x="372" y="408" font-family="Arial, Helvetica, sans-serif" font-size="104" font-weight="700" text-anchor="middle" fill="#0f5132">₹</text>
+</svg>
