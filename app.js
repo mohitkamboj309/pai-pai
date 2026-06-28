@@ -273,9 +273,12 @@ function refresh() { renderHeader(); renderScreen(); }
 function buildShell() {
   app().innerHTML = `
     <header class="app-header">
-      <div>
-        <h1>Pai-Pai</h1>
-        <div class="sub" id="hdr-sub">${tr('Construction ledger', 'Hisaab kitaab')}</div>
+      <div class="brand">
+        <img class="brand-logo" src="icons/icon-192.png" alt="" />
+        <div class="brand-text">
+          <h1>Pai-Pai</h1>
+          <div class="sub" id="hdr-sub">${tr('Construction ledger', 'Hisaab kitaab')}</div>
+        </div>
       </div>
       <div id="sync-badge"></div>
     </header>
@@ -1149,9 +1152,25 @@ function registerSW() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
 }
 
+// Keyboard khulne par body.kb-open laga do → bottom-nav chhup jaye (iOS float fix)
+function setupKeyboardNav() {
+  const vv = window.visualViewport;
+  if (vv) {
+    const onR = () => document.body.classList.toggle('kb-open', (window.innerHeight - vv.height) > 140);
+    vv.addEventListener('resize', onR); vv.addEventListener('scroll', onR);
+  } else {
+    document.addEventListener('focusin', (e) => { if (e.target.matches('input,textarea,select')) document.body.classList.add('kb-open'); });
+    document.addEventListener('focusout', () => setTimeout(() => {
+      const a = document.activeElement;
+      if (!a || !a.matches('input,textarea,select')) document.body.classList.remove('kb-open');
+    }, 120));
+  }
+}
+
 async function start() {
   registerSW();
   bindConnectivity();
+  setupKeyboardNav();
   if (!initClient()) { renderAuth(); return; }
   try {
     const { data } = await sb.auth.getSession();
