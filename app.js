@@ -6,7 +6,10 @@
 /* ----------------------------- Config ----------------------------- */
 // Aap chahein to yahan seedha bhi daal sakte hain, warna app ke andar
 // Settings/onboarding se save hoga (localStorage me).
-const HARDCODED = { url: '', key: '' };
+const HARDCODED = {
+  url: 'https://qqkjimcmthguobzfvvtd.supabase.co',
+  key: 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFxa2ppbWNtdGhndW9iemZ2dnRkIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI2MjA3NjAsImV4cCI6MjA5ODE5Njc2MH0.Indd6lZ0TU_jhJ3VUZRwvhAvt06vEfGw0302Vh1St4g'
+};
 
 function getCfg() {
   if (HARDCODED.url && HARDCODED.key) return HARDCODED;
