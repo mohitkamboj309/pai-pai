@@ -243,6 +243,21 @@ h1, h2, h3, h4 { letter-spacing: -0.02em; }
 .bar.red > span { background: linear-gradient(90deg, #e2685a, var(--red)); }
 .total-line { display: flex; justify-content: space-between; font-weight: 800; padding-top: 11px; margin-top: 5px; border-top: 2px solid var(--line); letter-spacing: -0.02em; }
 
+/* ---------- Charts ---------- */
+.chart-card .chart-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 8px; }
+.chart-card .chart-head h4 { margin: 0; }
+.seg-toggle { display: inline-flex; background: #eef2f0; border-radius: 999px; padding: 3px; gap: 2px; }
+.seg-toggle button { font-size: 12px; font-weight: 700; padding: 6px 12px; border-radius: 999px; color: var(--muted); }
+.seg-toggle button.on { background: #fff; color: var(--green); box-shadow: var(--shadow-sm); }
+.donut-wrap { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-top: 4px; }
+.donut { width: 140px; height: 140px; flex: 0 0 auto; }
+.legend { flex: 1; min-width: 170px; display: flex; flex-direction: column; gap: 10px; }
+.legend-item { display: flex; align-items: center; gap: 9px; font-size: 13.5px; }
+.dot-c { width: 11px; height: 11px; border-radius: 50%; flex: 0 0 11px; }
+.legend-item .lg-k { font-weight: 600; }
+.legend-item .lg-v { margin-left: auto; color: var(--muted); font-weight: 600; font-size: 12.5px; white-space: nowrap; }
+.barchart { width: 100%; height: auto; display: block; margin-top: 6px; }
+
 /* ---------- Auth ---------- */
 .auth-wrap { max-width: 420px; margin: 0 auto; padding: calc(var(--safe-top) + 52px) 22px 40px; text-align: center; }
 .auth-logo { width: 88px; height: 88px; border-radius: 22px; margin: 0 auto 16px; display: block; box-shadow: 0 12px 30px rgba(15,81,50,.28); }

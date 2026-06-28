@@ -307,12 +307,87 @@ function renderScreen() {
   screen.scrollTop = 0;
 }
 
+/* ====================== Charts (SVG, no deps) ===================== */
+const CAT_COLOR = { 'Material': '#1c7a49', 'Labour': '#1d6fd0', 'Theka Payment': '#e3a008', 'Architect': '#8b5cf6', 'Misc': '#94a3b8' };
+let dashRange = 'month';   // dashboard donut range: month | all
+
+function inrShort(n) {
+  n = Number(n) || 0; const neg = n < 0; const a = Math.abs(n); let s;
+  if (a >= 1e7) s = (a / 1e7).toFixed(2).replace(/\.?0+$/, '') + 'Cr';
+  else if (a >= 1e5) s = (a / 1e5).toFixed(2).replace(/\.?0+$/, '') + 'L';
+  else if (a >= 1e3) s = (a / 1e3).toFixed(1).replace(/\.0$/, '') + 'k';
+  else s = String(Math.round(a));
+  return (neg ? '−' : '') + '₹' + s;
+}
+function monthShort(m) { return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'][m]; }
+
+function catSegments(monthOnly) {
+  const map = {};
+  for (const t of state.transactions) {
+    if (t.type !== 'Out') continue;
+    if (monthOnly && !thisMonth(t.date)) continue;
+    const k = t.category || 'Misc';
+    map[k] = (map[k] || 0) + (Number(t.amount) || 0);
+  }
+  return Object.entries(map).map(([k, v]) => ({ label: k, value: v, color: CAT_COLOR[k] || '#94a3b8' }))
+    .filter((s) => s.value > 0).sort((a, b) => b.value - a.value);
+}
+function last6MonthsSpend() {
+  const now = new Date(); const out = [];
+  for (let i = 5; i >= 0; i--) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const y = d.getFullYear(), m = d.getMonth(); let total = 0;
+    for (const t of state.transactions) {
+      if (t.type !== 'Out') continue;
+      const td = new Date(t.date + 'T00:00:00');
+      if (td.getFullYear() === y && td.getMonth() === m) total += Number(t.amount) || 0;
+    }
+    out.push({ label: monthShort(m), value: total });
+  }
+  return out;
+}
+function donutSVG(segs, total) {
+  const r = 54, c = 2 * Math.PI * r, cx = 70, cy = 70, sw = 20; let acc = 0;
+  const arcs = segs.map((s) => {
+    const f = total ? s.value / total : 0;
+    const dash = `${(f * c).toFixed(2)} ${(c - f * c).toFixed(2)}`;
+    const off = (-acc * c).toFixed(2); acc += f;
+    return `<circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="${s.color}" stroke-width="${sw}" stroke-dasharray="${dash}" stroke-dashoffset="${off}" transform="rotate(-90 ${cx} ${cy})"/>`;
+  }).join('');
+  return `<svg viewBox="0 0 140 140" class="donut">
+    <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#eef2f0" stroke-width="${sw}"/>${arcs}
+    <text x="${cx}" y="${cy - 3}" text-anchor="middle" font-size="10" fill="#6b7785" font-weight="600">Total gaya</text>
+    <text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="17" fill="#0f1a14" font-weight="800">${inrShort(total)}</text>
+  </svg>`;
+}
+function donutLegend(segs, total) {
+  return `<div class="legend">${segs.map((s) => {
+    const pct = total ? Math.round(s.value / total * 100) : 0;
+    return `<div class="legend-item"><span class="dot-c" style="background:${s.color}"></span><span class="lg-k">${esc(s.label)}</span><span class="lg-v">${inr(s.value)} · ${pct}%</span></div>`;
+  }).join('')}</div>`;
+}
+function barSVG(bars) {
+  const max = Math.max(1, ...bars.map((b) => b.value));
+  const W = 320, n = bars.length, gap = 12, bw = (W - gap * (n - 1)) / n, top = 18, base = 96;
+  const body = bars.map((b, i) => {
+    const bh = Math.round((b.value / max) * (base - top));
+    const x = i * (bw + gap), y = base - bh;
+    const lbl = b.value > 0 ? `<text x="${x + bw / 2}" y="${y - 5}" text-anchor="middle" font-size="9.5" fill="#6b7785" font-weight="700">${inrShort(b.value)}</text>` : '';
+    return `<rect x="${x}" y="${y}" width="${bw}" height="${Math.max(bh, 2)}" rx="5" fill="url(#barg)"/>${lbl}<text x="${x + bw / 2}" y="113" text-anchor="middle" font-size="10.5" fill="#6b7785" font-weight="600">${esc(b.label)}</text>`;
+  }).join('');
+  return `<svg viewBox="0 0 ${W} 120" class="barchart"><defs><linearGradient id="barg" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2aa866"/><stop offset="1" stop-color="#0f5132"/></linearGradient></defs>${body}</svg>`;
+}
+
 /* ========================= SCREEN: DASHBOARD ====================== */
 function screenDashboard() {
   const cash = totalByType('Cash'), bank = totalByType('Bank');
   const kul = sumOut(); const isMah = sumOut((t) => thisMonth(t.date));
   const udhaar = sumOut((t) => t.payment_mode === 'Udhaar');
-  const recent = state.transactions.slice(0, 8);
+  const recent = state.transactions.slice(0, 6);
+  const segs = catSegments(dashRange === 'month');
+  const segTotal = segs.reduce((s, x) => s + x.value, 0);
+  const months = last6MonthsSpend();
+  const hasMonthData = months.some((m) => m.value > 0);
 
   const html = `
     <div class="screen">
@@ -332,6 +407,20 @@ function screenDashboard() {
         <button class="action-btn transfer" data-act="transfer"><span class="ico">🔁</span>Transfer</button>
       </div>
 
+      <div class="report-card chart-card">
+        <div class="chart-head">
+          <h4>📊 Kharcha kahan gaya</h4>
+          <div class="seg-toggle" id="dash-range">
+            <button class="${dashRange === 'month' ? 'on' : ''}" data-r="month">Is Mahina</button>
+            <button class="${dashRange === 'all' ? 'on' : ''}" data-r="all">Sab</button>
+          </div>
+        </div>
+        ${segs.length ? `<div class="donut-wrap">${donutSVG(segs, segTotal)}${donutLegend(segs, segTotal)}</div>`
+          : `<div class="empty" style="padding:22px 8px"><div class="big">📊</div>${dashRange === 'month' ? 'Is mahine abhi koi kharcha nahi' : 'Abhi koi kharcha nahi'}</div>`}
+      </div>
+
+      ${hasMonthData ? `<div class="report-card chart-card"><h4>📅 Mahine-wise kharcha (6 mahine)</h4>${barSVG(months)}</div>` : ''}
+
       <div class="section-label">Recent</div>
       <div class="list">${recent.length ? recent.map(entryRow).join('') : emptyState('Abhi koi entry nahi. Upar se shuru karein 👆')}</div>
     </div>`;
@@ -340,6 +429,8 @@ function screenDashboard() {
     $('#screen').querySelectorAll('.action-btn').forEach((b) => b.onclick = () => {
       const a = b.dataset.act; if (a === 'out') openOutForm(); else if (a === 'in') openInForm(); else openTransferForm();
     });
+    const rt = $('#dash-range');
+    if (rt) rt.querySelectorAll('button').forEach((b) => b.onclick = () => { dashRange = b.dataset.r; renderScreen(); });
     bindEntryRows();
   };
   return { html, bind };
