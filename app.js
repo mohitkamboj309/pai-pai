@@ -18,10 +18,16 @@ function getCfg() {
 function setCfg(url, key) { localStorage.setItem('gk_cfg', JSON.stringify({ url: url.trim(), key: key.trim() })); }
 function cfgValid() { const c = getCfg(); return !!(c && c.url && c.key); }
 
+/* --------------------------- Language (i18n) ---------------------- */
+// Default English; Hinglish optional. t(en, hi) — domain words (Cash, Material, Sakda, Theka, Udhaar) stay same.
+let lang = (function () { try { return localStorage.getItem('gk_lang') || 'en'; } catch (_) { return 'en'; } })();
+function setLang(l) { lang = l; try { localStorage.setItem('gk_lang', l); } catch (_) { } }
+function tr(en, hi) { return lang === 'hi' ? (hi != null ? hi : en) : en; }
+
 /* --------------------------- Constants ---------------------------- */
 const CATEGORIES = ['Material', 'Labour', 'Theka Payment', 'Architect', 'Misc'];
 const PAY_MODES = ['Cash', 'UPI', 'Net Banking', 'Online', 'Udhaar'];
-const SOURCES = ['Bank Nikasi', 'Salary', 'Loan', 'Udhaar Liya', 'Savings', 'Sale', 'Other'];
+const SOURCES = ['Bank Withdrawal', 'Salary', 'Loan', 'Borrowed', 'Savings', 'Sale', 'Other'];
 const UNITS = ['Sakda', 'Trolley', 'Tractor', 'Truck', 'Bori', 'Kg', 'Quintal', 'Ton', 'Nag', 'Number', 'Hazaar', 'Ft', 'Sq Ft', 'Din', 'Litre', 'Tanker', 'Bundle'];
 // Item ke hisaab se sahi default unit (reta/bajri/mitti → Sakda; eint → Hazaar/per-1000; sariya/taar → Kg; kade → Nag)
 const ITEM_UNIT = {
@@ -269,7 +275,7 @@ function buildShell() {
     <header class="app-header">
       <div>
         <h1>Pai-Pai</h1>
-        <div class="sub" id="hdr-sub">Hisaab kitaab</div>
+        <div class="sub" id="hdr-sub">${tr('Construction ledger', 'Hisaab kitaab')}</div>
       </div>
       <div id="sync-badge"></div>
     </header>
@@ -277,19 +283,20 @@ function buildShell() {
     <nav class="bottom-nav" id="nav"></nav>
   `;
   $('#nav').innerHTML = [
-    ['dashboard', '🏠', 'Home'], ['entries', '📒', 'Entries'], ['reports', '📊', 'Reports'],
-    ['theka', '🤝', 'Theka'], ['settings', '⚙️', 'Settings']
+    ['dashboard', '🏠', tr('Home', 'Home')], ['entries', '📒', tr('Entries', 'Entries')], ['reports', '📊', tr('Reports', 'Reports')],
+    ['theka', '🤝', tr('Theka', 'Theka')], ['settings', '⚙️', tr('Settings', 'Settings')]
   ].map(([v, i, l]) => `<button class="nav-item" data-view="${v}"><span class="ico">${i}</span>${l}</button>`).join('');
   $('#nav').addEventListener('click', (e) => { const b = e.target.closest('.nav-item'); if (b) show(b.dataset.view); });
 }
 
 function renderHeader() {
+  const sub = $('#hdr-sub'); if (sub) sub.textContent = tr('Construction ledger', 'Hisaab kitaab');
   const badge = $('#sync-badge'); if (!badge) return;
   const pc = pendingCount();
-  if (!state.online) badge.innerHTML = `<span class="sync-badge offline"><span class="dot"></span>Offline${pc ? ' · ' + pc : ''}</span>`;
-  else if (pc) badge.innerHTML = `<span class="sync-badge pending"><span class="dot"></span>Sync ${pc}</span>`;
-  else badge.innerHTML = `<span class="sync-badge"><span class="dot"></span>Synced</span>`;
-  badge.onclick = async () => { if (state.online) { toast('Sync ho raha hai…'); await flushQueue(); await loadAll(); refresh(); toast('Sync ho gaya'); } };
+  if (!state.online) badge.innerHTML = `<span class="sync-badge offline"><span class="dot"></span>${tr('Offline', 'Offline')}${pc ? ' · ' + pc : ''}</span>`;
+  else if (pc) badge.innerHTML = `<span class="sync-badge pending"><span class="dot"></span>${tr('Sync', 'Sync')} ${pc}</span>`;
+  else badge.innerHTML = `<span class="sync-badge"><span class="dot"></span>${tr('Synced', 'Synced')}</span>`;
+  badge.onclick = async () => { if (state.online) { toast(tr('Syncing…', 'Sync ho raha hai…')); await flushQueue(); await loadAll(); refresh(); toast(tr('Synced', 'Sync ho gaya')); } };
 }
 
 function show(view) { state.view = view; renderScreen(); }
@@ -356,7 +363,7 @@ function donutSVG(segs, total) {
   }).join('');
   return `<svg viewBox="0 0 140 140" class="donut">
     <circle cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke="#eef2f0" stroke-width="${sw}"/>${arcs}
-    <text x="${cx}" y="${cy - 3}" text-anchor="middle" font-size="10" fill="#6b7785" font-weight="600">Total gaya</text>
+    <text x="${cx}" y="${cy - 3}" text-anchor="middle" font-size="10" fill="#6b7785" font-weight="600">${tr('Total', 'Total gaya')}</text>
     <text x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="17" fill="#0f1a14" font-weight="800">${inrShort(total)}</text>
   </svg>`;
 }
@@ -392,37 +399,37 @@ function screenDashboard() {
   const html = `
     <div class="screen">
       <div class="balance-row">
-        <div class="bal-card cash"><div class="label">💵 Cash haath me</div><div class="amt">${inr(cash)}</div></div>
-        <div class="bal-card bank"><div class="label">🏦 Bank me</div><div class="amt">${inr(bank)}</div></div>
+        <div class="bal-card cash"><div class="label">💵 ${tr('Cash in hand', 'Cash haath me')}</div><div class="amt">${inr(cash)}</div></div>
+        <div class="bal-card bank"><div class="label">🏦 ${tr('In bank', 'Bank me')}</div><div class="amt">${inr(bank)}</div></div>
       </div>
       <div class="stat-row">
-        <div class="stat"><div class="label">Kul kharcha</div><div class="amt spend">${inr(kul)}</div></div>
-        <div class="stat"><div class="label">Is mahine</div><div class="amt spend">${inr(isMah)}</div></div>
+        <div class="stat"><div class="label">${tr('Total spent', 'Kul kharcha')}</div><div class="amt spend">${inr(kul)}</div></div>
+        <div class="stat"><div class="label">${tr('This month', 'Is mahine')}</div><div class="amt spend">${inr(isMah)}</div></div>
       </div>
-      ${udhaar > 0 ? `<div class="stat-row"><div class="stat" style="grid-column:1/-1"><div class="label">⚠️ Udhaar baaki (dena hai)</div><div class="amt" style="color:#8a6100">${inr(udhaar)}</div></div></div>` : ''}
+      ${udhaar > 0 ? `<div class="stat-row"><div class="stat" style="grid-column:1/-1"><div class="label">⚠️ ${tr('Udhaar pending (to pay)', 'Udhaar baaki (dena hai)')}</div><div class="amt" style="color:#8a6100">${inr(udhaar)}</div></div></div>` : ''}
 
       <div class="actions">
-        <button class="action-btn out" data-act="out"><span class="ico">💸</span>Kharcha (Paisa Gaya)</button>
-        <button class="action-btn in" data-act="in"><span class="ico">➕</span>Paisa Aaya</button>
-        <button class="action-btn transfer" data-act="transfer"><span class="ico">🔁</span>Transfer</button>
+        <button class="action-btn out" data-act="out"><span class="ico">💸</span>${tr('Expense (Money Out)', 'Kharcha (Paisa Gaya)')}</button>
+        <button class="action-btn in" data-act="in"><span class="ico">➕</span>${tr('Money In', 'Paisa Aaya')}</button>
+        <button class="action-btn transfer" data-act="transfer"><span class="ico">🔁</span>${tr('Transfer', 'Transfer')}</button>
       </div>
 
       <div class="report-card chart-card">
         <div class="chart-head">
-          <h4>📊 Kharcha kahan gaya</h4>
+          <h4>📊 ${tr('Where money went', 'Kharcha kahan gaya')}</h4>
           <div class="seg-toggle" id="dash-range">
-            <button class="${dashRange === 'month' ? 'on' : ''}" data-r="month">Is Mahina</button>
-            <button class="${dashRange === 'all' ? 'on' : ''}" data-r="all">Sab</button>
+            <button class="${dashRange === 'month' ? 'on' : ''}" data-r="month">${tr('This month', 'Is Mahina')}</button>
+            <button class="${dashRange === 'all' ? 'on' : ''}" data-r="all">${tr('All', 'Sab')}</button>
           </div>
         </div>
         ${segs.length ? `<div class="donut-wrap">${donutSVG(segs, segTotal)}${donutLegend(segs, segTotal)}</div>`
-          : `<div class="empty" style="padding:22px 8px"><div class="big">📊</div>${dashRange === 'month' ? 'Is mahine abhi koi kharcha nahi' : 'Abhi koi kharcha nahi'}</div>`}
+          : `<div class="empty" style="padding:22px 8px"><div class="big">📊</div>${dashRange === 'month' ? tr('No expense this month yet', 'Is mahine abhi koi kharcha nahi') : tr('No expense yet', 'Abhi koi kharcha nahi')}</div>`}
       </div>
 
-      ${hasMonthData ? `<div class="report-card chart-card"><h4>📅 Mahine-wise kharcha (6 mahine)</h4>${barSVG(months)}</div>` : ''}
+      ${hasMonthData ? `<div class="report-card chart-card"><h4>📅 ${tr('Monthly spend (6 months)', 'Mahine-wise kharcha (6 mahine)')}</h4>${barSVG(months)}</div>` : ''}
 
-      <div class="section-label">Recent</div>
-      <div class="list">${recent.length ? recent.map(entryRow).join('') : emptyState('Abhi koi entry nahi. Upar se shuru karein 👆')}</div>
+      <div class="section-label">${tr('Recent', 'Recent')}</div>
+      <div class="list">${recent.length ? recent.map(entryRow).join('') : emptyState(tr('No entries yet. Start from the buttons above 👆', 'Abhi koi entry nahi. Upar se shuru karein 👆'))}</div>
     </div>`;
 
   const bind = () => {
@@ -443,7 +450,7 @@ function entryRow(t) {
   if (t.type === 'Out') {
     cls = 'out'; amtCls = 'out'; sign = '−';
     ico = CAT_ICON[t.category] || '🧾';
-    title = t.category === 'Theka Payment' ? ('Theka' + (t.vendor ? ' — ' + t.vendor : '')) : (t.item || t.category || 'Kharcha');
+    title = t.category === 'Theka Payment' ? (tr('Theka', 'Theka') + (t.vendor ? ' — ' + t.vendor : '')) : (t.item || t.category || tr('Expense', 'Kharcha'));
     const bits = [];
     if (t.qty) bits.push(`${t.qty} ${t.unit || ''}${t.rate ? ' @' + inr(t.rate) : ''}`);
     if (t.vendor && t.category !== 'Theka Payment') bits.push(t.vendor);
@@ -451,7 +458,7 @@ function entryRow(t) {
     meta = bits.filter(Boolean).join(' · ');
   } else if (t.type === 'In') {
     cls = 'in'; amtCls = 'in'; sign = '+'; ico = '💰';
-    title = t.source || 'Paisa Aaya';
+    title = t.source || tr('Money In', 'Paisa Aaya');
     meta = [t.from_party, accName(t.account_id)].filter(Boolean).join(' · ');
   } else {
     cls = 'transfer'; amtCls = 'transfer'; sign = ''; ico = '🔁';
@@ -479,12 +486,12 @@ const entryFilter = { type: 'all', q: '' };
 function screenEntries() {
   const html = `
     <div class="screen">
-      <h2 class="title">Saari Entries</h2>
+      <h2 class="title">${tr('All Entries', 'Saari Entries')}</h2>
       <div class="toolbar">
-        <input id="ef-q" placeholder="🔍 Item, vendor, note…" value="${esc(entryFilter.q)}" />
+        <input id="ef-q" placeholder="🔍 ${tr('Item, vendor, note…', 'Item, vendor, note…')}" value="${esc(entryFilter.q)}" />
       </div>
       <div class="filter-chips" id="ef-chips">
-        ${['all', 'Out', 'In', 'Transfer'].map((t) => `<button class="chip sm ${entryFilter.type === t ? 'active' : ''}" data-t="${t}">${({ all: 'Sab', Out: 'Kharcha', In: 'Aaya', Transfer: 'Transfer' })[t]}</button>`).join('')}
+        ${['all', 'Out', 'In', 'Transfer'].map((ty) => `<button class="chip sm ${entryFilter.type === ty ? 'active' : ''}" data-t="${ty}">${({ all: tr('All', 'Sab'), Out: tr('Expense', 'Kharcha'), In: tr('In', 'Aaya'), Transfer: tr('Transfer', 'Transfer') })[ty]}</button>`).join('')}
       </div>
       <div class="list" id="ef-list"></div>
     </div>`;
@@ -494,7 +501,7 @@ function screenEntries() {
       if (entryFilter.type !== 'all') rows = rows.filter((t) => t.type === entryFilter.type);
       const q = entryFilter.q.trim().toLowerCase();
       if (q) rows = rows.filter((t) => [t.item, t.vendor, t.notes, t.source, t.from_party, t.category].some((x) => (x || '').toLowerCase().includes(q)));
-      $('#ef-list').innerHTML = rows.length ? rows.map(entryRow).join('') : emptyState('Kuch nahi mila');
+      $('#ef-list').innerHTML = rows.length ? rows.map(entryRow).join('') : emptyState(tr('Nothing found', 'Kuch nahi mila'));
       bindEntryRows();
     };
     $('#ef-q').oninput = (e) => { entryFilter.q = e.target.value; renderList(); };
@@ -507,7 +514,7 @@ function screenEntries() {
 }
 
 /* ========================= SCREEN: REPORTS ======================== */
-function rangeLabel() { return { all: 'Sab', month: 'Is Mahina', lastmonth: 'Pichla Mahina' }[state.filterRange]; }
+function rangeLabel() { return { all: tr('All', 'Sab'), month: tr('This Month', 'Is Mahina'), lastmonth: tr('Last Month', 'Pichla Mahina') }[state.filterRange]; }
 function screenReports() {
   const rf = state.filterRange === 'all' ? null : true;
   const aaya = groupSum('In', (t) => t.source, rf);
@@ -535,40 +542,40 @@ function screenReports() {
 
   const thekaRows = state.contracts.map((c) => {
     const paid = contractPaid(c.id); const amt = Number(c.theka_amount) || 0; const baaki = amt - paid;
-    return `<div class="rrow"><div class="k">${esc(c.thekedar_name || c.kaam || 'Theka')}<small>${esc(c.kaam || '')}</small></div>
-      <div class="v">${inr(paid)} / ${inr(amt)}<br><small style="color:${baaki > 0 ? '#c0392b' : '#1f7a4d'}">${baaki > 0 ? 'Baaki ' + inr(baaki) : 'Pura'}</small></div></div>
+    return `<div class="rrow"><div class="k">${esc(c.thekedar_name || c.kaam || tr('Theka', 'Theka'))}<small>${esc(c.kaam || '')}</small></div>
+      <div class="v">${inr(paid)} / ${inr(amt)}<br><small style="color:${baaki > 0 ? '#c0392b' : '#1f7a4d'}">${baaki > 0 ? tr('Left ', 'Baaki ') + inr(baaki) : tr('Paid', 'Pura')}</small></div></div>
       <div class="bar"><span style="width:${amt ? Math.min(100, Math.round(paid / amt * 100)) : 0}%"></span></div>`;
   }).join('');
 
   const html = `
     <div class="screen">
-      <h2 class="title">Reports — ${rangeLabel()}</h2>
+      <h2 class="title">${tr('Reports', 'Reports')} — ${rangeLabel()}</h2>
       <div class="filter-chips" id="rf-chips">
-        ${['all', 'month', 'lastmonth'].map((r) => `<button class="chip sm ${state.filterRange === r ? 'active' : ''}" data-r="${r}">${({ all: 'Sab', month: 'Is Mahina', lastmonth: 'Pichla Mahina' })[r]}</button>`).join('')}
+        ${['all', 'month', 'lastmonth'].map((r) => `<button class="chip sm ${state.filterRange === r ? 'active' : ''}" data-r="${r}">${({ all: tr('All', 'Sab'), month: tr('This Month', 'Is Mahina'), lastmonth: tr('Last Month', 'Pichla Mahina') })[r]}</button>`).join('')}
       </div>
 
       <div class="report-card">
-        <h4>💼 Account Balances (abhi)</h4>
-        ${state.accounts.map((a) => `<div class="rrow"><div class="k">${a.type === 'Cash' ? '💵' : '🏦'} ${esc(a.name)}</div><div class="v">${inr(balanceOf(a.id))}</div></div>`).join('') || '<div class="muted">Koi account nahi</div>'}
+        <h4>💼 ${tr('Account Balances (now)', 'Account Balances (abhi)')}</h4>
+        ${state.accounts.map((a) => `<div class="rrow"><div class="k">${a.type === 'Cash' ? '💵' : '🏦'} ${esc(a.name)}</div><div class="v">${inr(balanceOf(a.id))}</div></div>`).join('') || `<div class="muted">${tr('No account', 'Koi account nahi')}</div>`}
       </div>
 
       <div class="report-card">
-        <h4>🔁 ${rangeLabel()} — Aaya vs Gaya</h4>
-        <div class="rrow"><div class="k">Total Aaya (In)</div><div class="v" style="color:#1f7a4d">${inr(totalIn)}</div></div>
-        <div class="rrow"><div class="k">Total Gaya (Kharcha)</div><div class="v" style="color:#c0392b">${inr(totalOut)}</div></div>
-        <div class="total-line"><span>Bachat / Antar</span><span>${inr(totalIn - totalOut)}</span></div>
+        <h4>🔁 ${rangeLabel()} — ${tr('In vs Out', 'Aaya vs Gaya')}</h4>
+        <div class="rrow"><div class="k">${tr('Total In', 'Total Aaya (In)')}</div><div class="v" style="color:#1f7a4d">${inr(totalIn)}</div></div>
+        <div class="rrow"><div class="k">${tr('Total Out (spent)', 'Total Gaya (Kharcha)')}</div><div class="v" style="color:#c0392b">${inr(totalOut)}</div></div>
+        <div class="total-line"><span>${tr('Savings / Difference', 'Bachat / Antar')}</span><span>${inr(totalIn - totalOut)}</span></div>
       </div>
 
-      ${card('💰 Paisa kahan se aaya', aaya, { bar: true })}
-      ${card('📦 Category-wise kharcha', byCat, { bar: true, red: true })}
-      ${card('🧱 Item-wise (material/labour)', byItem, { showQty: true })}
-      ${card('🏪 Vendor / kise gaya', byVendor)}
-      ${card('💳 Payment mode wise', byMode)}
+      ${card('💰 ' + tr('Where money came from', 'Paisa kahan se aaya'), aaya, { bar: true })}
+      ${card('📦 ' + tr('Category-wise spend', 'Category-wise kharcha'), byCat, { bar: true, red: true })}
+      ${card('🧱 ' + tr('Item-wise (material/labour)', 'Item-wise (material/labour)'), byItem, { showQty: true })}
+      ${card('🏪 ' + tr('Vendor / where it went', 'Vendor / kise gaya'), byVendor)}
+      ${card('💳 ' + tr('Payment mode wise', 'Payment mode wise'), byMode)}
 
-      ${state.contracts.length ? `<div class="report-card"><h4>🤝 Theka tracking</h4>${thekaRows}</div>` : ''}
-      ${udhaarByVendor.length ? `<div class="report-card"><h4>⚠️ Udhaar baaki — total dena hai (sab waqt ka)</h4>${udhaarByVendor.map((r) => `<div class="rrow"><div class="k">${esc(r.key)}</div><div class="v" style="color:#8a6100">${inr(r.amount)}</div></div>`).join('')}</div>` : ''}
+      ${state.contracts.length ? `<div class="report-card"><h4>🤝 ${tr('Theka tracking', 'Theka tracking')}</h4>${thekaRows}</div>` : ''}
+      ${udhaarByVendor.length ? `<div class="report-card"><h4>⚠️ ${tr('Udhaar pending — total to pay (all-time)', 'Udhaar baaki — total dena hai (sab waqt ka)')}</h4>${udhaarByVendor.map((r) => `<div class="rrow"><div class="k">${esc(r.key)}</div><div class="v" style="color:#8a6100">${inr(r.amount)}</div></div>`).join('')}</div>` : ''}
 
-      <button class="btn-secondary" id="csv-btn" style="width:100%;margin-top:6px">⬇️ CSV / Excel export</button>
+      <button class="btn-secondary" id="csv-btn" style="width:100%;margin-top:6px">⬇️ ${tr('CSV / Excel export', 'CSV / Excel export')}</button>
     </div>`;
 
   const bind = () => {
@@ -582,21 +589,21 @@ function screenReports() {
 function screenTheka() {
   const html = `
     <div class="screen">
-      <h2 class="title">Theka (Contract)</h2>
-      <button class="btn-secondary" id="add-theka" style="width:100%;margin-bottom:12px">➕ Naya Theka</button>
+      <h2 class="title">${tr('Theka (Contract)', 'Theka (Contract)')}</h2>
+      <button class="btn-secondary" id="add-theka" style="width:100%;margin-bottom:12px">➕ ${tr('New Theka', 'Naya Theka')}</button>
       <div class="list">
         ${state.contracts.length ? state.contracts.map((c) => {
           const paid = contractPaid(c.id), amt = Number(c.theka_amount) || 0, baaki = amt - paid;
           const pct = amt ? Math.min(100, Math.round(paid / amt * 100)) : 0;
           return `<div class="report-card" data-id="${c.id}" style="cursor:pointer">
-            <h4>🤝 ${esc(c.thekedar_name || 'Thekedar')}</h4>
+            <h4>🤝 ${esc(c.thekedar_name || tr('Thekedar', 'Thekedar'))}</h4>
             ${c.kaam ? `<div class="muted" style="margin:-4px 0 8px">${esc(c.kaam)}</div>` : ''}
-            <div class="rrow"><div class="k">Theka amount</div><div class="v">${inr(amt)}</div></div>
-            <div class="rrow"><div class="k">Diya</div><div class="v" style="color:#1f7a4d">${inr(paid)}</div></div>
-            <div class="rrow"><div class="k">Baaki</div><div class="v" style="color:${baaki > 0 ? '#c0392b' : '#1f7a4d'}">${inr(baaki)}</div></div>
+            <div class="rrow"><div class="k">${tr('Theka amount', 'Theka amount')}</div><div class="v">${inr(amt)}</div></div>
+            <div class="rrow"><div class="k">${tr('Paid', 'Diya')}</div><div class="v" style="color:#1f7a4d">${inr(paid)}</div></div>
+            <div class="rrow"><div class="k">${tr('Left', 'Baaki')}</div><div class="v" style="color:${baaki > 0 ? '#c0392b' : '#1f7a4d'}">${inr(baaki)}</div></div>
             <div class="bar"><span style="width:${pct}%"></span></div>
           </div>`;
-        }).join('') : emptyState('Abhi koi theka nahi. "Naya Theka" se add karein.')}
+        }).join('') : emptyState(tr('No theka yet. Add one with "New Theka".', 'Abhi koi theka nahi. "Naya Theka" se add karein.'))}
       </div>
     </div>`;
   const bind = () => {
@@ -614,47 +621,54 @@ function screenSettings() {
   const email = state.session && state.session.user ? state.session.user.email : '';
   const html = `
     <div class="screen">
-      <h2 class="title">Settings</h2>
+      <h2 class="title">${tr('Settings', 'Settings')}</h2>
 
-      <div class="section-label">Accounts (paisa kahan hai)</div>
+      <div class="section-label">${tr('Language', 'Language')}</div>
+      <div class="seg-toggle" id="lang-toggle" style="width:100%">
+        <button class="${lang === 'en' ? 'on' : ''}" data-l="en" style="flex:1">English</button>
+        <button class="${lang === 'hi' ? 'on' : ''}" data-l="hi" style="flex:1">Hinglish</button>
+      </div>
+
+      <div class="section-label">${tr('Accounts (where money is)', 'Accounts (paisa kahan hai)')}</div>
       <div class="list">
         ${state.accounts.map((a) => `<div class="entry" data-acc="${a.id}">
           <div class="ic">${a.type === 'Cash' ? '💵' : '🏦'}</div>
-          <div class="body"><div class="ttl">${esc(a.name)}</div><div class="meta">${a.type} · Balance ${inr(balanceOf(a.id))}</div></div>
+          <div class="body"><div class="ttl">${esc(a.name)}</div><div class="meta">${a.type} · ${tr('Balance', 'Balance')} ${inr(balanceOf(a.id))}</div></div>
           <div class="amt">›</div></div>`).join('')}
       </div>
-      <button class="btn-secondary" id="add-acc" style="width:100%;margin-top:10px">➕ Naya Account</button>
+      <button class="btn-secondary" id="add-acc" style="width:100%;margin-top:10px">➕ ${tr('New Account', 'Naya Account')}</button>
 
-      <div class="section-label">Backup</div>
+      <div class="section-label">${tr('Backup', 'Backup')}</div>
       <div class="small-actions">
-        <button class="btn-secondary" id="exp-json">⬇️ Backup (JSON)</button>
+        <button class="btn-secondary" id="exp-json">⬇️ ${tr('Backup (JSON)', 'Backup (JSON)')}</button>
         <button class="btn-secondary" id="exp-csv">⬇️ CSV</button>
       </div>
-      <button class="btn-secondary" id="sync-now" style="width:100%;margin-top:8px">🔄 Abhi Sync karo</button>
+      <button class="btn-secondary" id="sync-now" style="width:100%;margin-top:8px">🔄 ${tr('Sync now', 'Abhi Sync karo')}</button>
 
-      <div class="section-label">Cloud (Supabase)</div>
-      <div class="field"><label>Project URL</label><input id="cfg-url" value="${esc(c.url)}" placeholder="https://xxxx.supabase.co" autocapitalize="off" autocorrect="off" /></div>
-      <div class="field"><label>Anon public key</label><input id="cfg-key" value="${esc(c.key)}" placeholder="eyJ..." autocapitalize="off" autocorrect="off" /></div>
-      <button class="btn-secondary" id="save-cfg" style="width:100%">💾 Cloud config save</button>
+      <div class="section-label">${tr('Cloud (Supabase)', 'Cloud (Supabase)')}</div>
+      <div class="field"><label>${tr('Project URL', 'Project URL')}</label><input id="cfg-url" value="${esc(c.url)}" placeholder="https://xxxx.supabase.co" autocapitalize="off" autocorrect="off" /></div>
+      <div class="field"><label>${tr('Anon public key', 'Anon public key')}</label><input id="cfg-key" value="${esc(c.key)}" placeholder="eyJ..." autocapitalize="off" autocorrect="off" /></div>
+      <button class="btn-secondary" id="save-cfg" style="width:100%">💾 ${tr('Save cloud config', 'Cloud config save')}</button>
 
-      <div class="section-label">Account</div>
-      <div class="muted" style="margin:0 2px 8px">Logged in: ${esc(email || '—')}</div>
-      <button class="btn-ghost" id="logout">🚪 Logout</button>
+      <div class="section-label">${tr('Account', 'Account')}</div>
+      <div class="muted" style="margin:0 2px 8px">${tr('Logged in', 'Logged in')}: ${esc(email || '—')}</div>
+      <button class="btn-ghost" id="logout">🚪 ${tr('Logout', 'Logout')}</button>
       <div class="center muted mt16">Pai-Pai · v1</div>
     </div>`;
 
   const bind = () => {
+    $('#lang-toggle').querySelectorAll('button').forEach((b) => b.onclick = () => { if (b.dataset.l !== lang) { setLang(b.dataset.l); refresh(); } });
     $('#add-acc').onclick = () => openAccountForm();
     $('#screen').querySelectorAll('.entry[data-acc]').forEach((el) => el.onclick = () => {
       const a = state.accounts.find((x) => x.id === el.dataset.acc); if (a) openAccountForm(a);
     });
     $('#exp-json').onclick = exportJSON;
     $('#exp-csv').onclick = exportCSV;
-    $('#sync-now').onclick = async () => { toast('Sync…'); await flushQueue(); await loadAll(); refresh(); toast('Ho gaya'); };
+    $('#sync-now').onclick = async () => { toast(tr('Syncing…', 'Sync…')); await flushQueue(); await loadAll(); refresh(); toast(tr('Done', 'Ho gaya')); };
     $('#save-cfg').onclick = () => {
       const url = $('#cfg-url').value, key = $('#cfg-key').value;
-      if (!url || !key) return toast('URL aur key dono daalein', true);
-      setCfg(url, key); toast('Save ho gaya — app reload ho raha hai'); setTimeout(() => location.reload(), 800);
+      if (!url || !key) return toast(tr('Enter both URL and key', 'URL aur key dono daalein'), true);
+      setCfg(url, key); toast(tr('Saved — reloading app', 'Save ho gaya — app reload ho raha hai')); setTimeout(() => location.reload(), 800);
     };
     $('#logout').onclick = async () => { if (sb) await sb.auth.signOut(); localStorage.removeItem('gk_pending'); location.reload(); };
   };
@@ -693,41 +707,41 @@ function openOutForm(existing) {
   // Purani entry ka unit agar list me na ho to bhi use option me rakho (warna save par chup-chaap badal jata)
   const unitOpts = (t.unit && !UNITS.includes(t.unit)) ? [t.unit, ...UNITS] : UNITS;
   const inner = `
-    <h3>${existing ? '✏️ Kharcha edit' : '➖ Naya Kharcha'}</h3>
-    <div class="field"><label>Category</label>${chipsHtml('cat', CATEGORIES, t.category)}</div>
+    <h3>${existing ? tr('✏️ Edit expense', '✏️ Kharcha edit') : tr('➖ New Expense', '➖ Naya Kharcha')}</h3>
+    <div class="field"><label>${tr('Category', 'Category')}</label>${chipsHtml('cat', CATEGORIES, t.category)}</div>
 
     <div id="item-block">
-      <div class="field"><label>Item / Kaam</label>
-        <input id="f-item" list="${itemsDL}" value="${esc(t.item || '')}" placeholder="jaise Cement, Sariya, Kade, Taar…" />
+      <div class="field"><label>${tr('Item / Work', 'Item / Kaam')}</label>
+        <input id="f-item" list="${itemsDL}" value="${esc(t.item || '')}" placeholder="${tr('e.g. Cement, Sariya, Kade, Taar…', 'jaise Cement, Sariya, Kade, Taar…')}" />
         <datalist id="${itemsDL}"></datalist>
       </div>
       <div class="row3">
-        <div class="field"><label>Qty</label><input id="f-qty" type="number" inputmode="decimal" step="any" value="${t.qty ?? ''}" placeholder="0" /></div>
-        <div class="field"><label>Unit</label><select id="f-unit">${unitOpts.map((u) => `<option ${u === t.unit ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
-        <div class="field"><label>Rate ₹</label><input id="f-rate" type="number" inputmode="decimal" step="any" value="${t.rate ?? ''}" placeholder="0" /></div>
+        <div class="field"><label>${tr('Qty', 'Qty')}</label><input id="f-qty" type="number" inputmode="decimal" step="any" value="${t.qty ?? ''}" placeholder="0" /></div>
+        <div class="field"><label>${tr('Unit', 'Unit')}</label><select id="f-unit">${unitOpts.map((u) => `<option ${u === t.unit ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
+        <div class="field"><label>${tr('Rate ₹', 'Rate ₹')}</label><input id="f-rate" type="number" inputmode="decimal" step="any" value="${t.rate ?? ''}" placeholder="0" /></div>
       </div>
     </div>
 
-    <div id="theka-block" class="field hidden"><label>Kis theke ka payment</label>
-      <select id="f-contract"><option value="">— Theka chuno —</option>${state.contracts.map((c) => `<option value="${c.id}" ${c.id === t.contract_id ? 'selected' : ''}>${esc(c.thekedar_name || c.kaam || 'Theka')}</option>`).join('')}</select>
+    <div id="theka-block" class="field hidden"><label>${tr('Which theka payment', 'Kis theke ka payment')}</label>
+      <select id="f-contract"><option value="">${tr('— Choose theka —', '— Theka chuno —')}</option>${state.contracts.map((c) => `<option value="${c.id}" ${c.id === t.contract_id ? 'selected' : ''}>${esc(c.thekedar_name || c.kaam || tr('Theka', 'Theka'))}</option>`).join('')}</select>
     </div>
 
-    <div class="field"><label>Amount ₹ (kul)</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /><div class="amt-preview" id="amt-prev"></div></div>
+    <div class="field"><label>${tr('Amount ₹ (total)', 'Amount ₹ (kul)')}</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /><div class="amt-preview" id="amt-prev"></div></div>
 
-    <div class="field"><label>Kisse aaya / kise diya (vendor)</label><input id="f-vendor" list="dl-vendor" value="${esc(t.vendor || '')}" placeholder="dukaan / aadmi ka naam" />
+    <div class="field"><label>${tr('From / to whom (vendor)', 'Kisse aaya / kise diya (vendor)')}</label><input id="f-vendor" list="dl-vendor" value="${esc(t.vendor || '')}" placeholder="${tr('shop / person name', 'dukaan / aadmi ka naam')}" />
       <datalist id="dl-vendor">${learned('gk_vendors').map((v) => `<option>${esc(v)}</option>`).join('')}</datalist></div>
 
-    <div class="field"><label>Paisa kahan se gaya (account)</label><select id="f-account">${accOptions(t.account_id)}</select></div>
-    <div class="field"><label>Payment mode</label>${chipsHtml('mode', PAY_MODES, t.payment_mode)}</div>
+    <div class="field"><label>${tr('Paid from (account)', 'Paisa kahan se gaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
+    <div class="field"><label>${tr('Payment mode', 'Payment mode')}</label>${chipsHtml('mode', PAY_MODES, t.payment_mode)}</div>
 
     <div class="row2">
-      <div class="field"><label>Date</label><input id="f-date" type="date" value="${t.date}" /></div>
+      <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
     </div>
-    <div class="field"><label>Note (optional)</label><textarea id="f-notes" placeholder="koi detail…">${esc(t.notes || '')}</textarea></div>
+    <div class="field"><label>${tr('Note (optional)', 'Note (optional)')}</label><textarea id="f-notes" placeholder="${tr('any detail…', 'koi detail…')}">${esc(t.notes || '')}</textarea></div>
 
-    <button class="btn-primary" id="save">💾 Save</button>
-    ${existing ? '<button class="btn-primary danger" id="del">🗑️ Delete</button>' : ''}
-    <button class="btn-ghost" id="cancel">Cancel</button>
+    <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
+    ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
+    <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>
   `;
   openSheet(inner, (root) => {
     const updItems = (cat) => { root.querySelector('#' + itemsDL).innerHTML = itemSuggestions(cat).map((i) => `<option>${esc(i)}</option>`).join(''); };
@@ -771,7 +785,7 @@ function openOutForm(existing) {
       const rb = rbGet(itemEl.value, vendorEl.value);
       if (rb != null && String(rb) !== rate.value) {
         rate.value = rb; rateAuto = true; calc();
-        if (!rateNoticed) { rateNoticed = true; toast('Pichli baar ka rate bhar diya — badal sakte ho'); }
+        if (!rateNoticed) { rateNoticed = true; toast(tr('Filled last used rate — you can change it', 'Pichli baar ka rate bhar diya — badal sakte ho')); }
       }
     };
     rate.addEventListener('input', () => { rateAuto = false; });  // user ne rate chheda → ab manual
@@ -803,7 +817,7 @@ function openOutForm(existing) {
         if (!manual && !isNaN(q) && !isNaN(r)) rec.amount = q * r;
         rbSet(rec.item, rec.vendor, rec.rate);   // is item (+ shop) ka rate yaad rakho
       }
-      if (!(rec.amount > 0)) return toast('Amount sahi daalein', true);
+      if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
       learnList('gk_items_' + cat, rec.item); learnList('gk_vendors', rec.vendor);
       await saveTx(rec, !existing); closeSheet();
     };
@@ -814,16 +828,16 @@ function openOutForm(existing) {
 function openInForm(existing) {
   const t = existing || { id: uid(), type: 'In', date: today(), source: 'Bank Nikasi', account_id: (state.accounts[0] || {}).id };
   const inner = `
-    <h3>${existing ? '✏️ Aaya edit' : '➕ Paisa Aaya'}</h3>
-    <div class="field"><label>Kahan aaya (account)</label><select id="f-account">${accOptions(t.account_id)}</select></div>
-    <div class="field"><label>Amount ₹</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
-    <div class="field"><label>Kahan se aaya (source)</label>${chipsHtml('src', SOURCES, t.source)}</div>
-    <div class="field"><label>Kisse (naam, optional)</label><input id="f-from" value="${esc(t.from_party || '')}" placeholder="aadmi / bank" /></div>
-    <div class="field"><label>Date</label><input id="f-date" type="date" value="${t.date}" /></div>
-    <div class="field"><label>Note</label><textarea id="f-notes">${esc(t.notes || '')}</textarea></div>
-    <button class="btn-primary" id="save">💾 Save</button>
-    ${existing ? '<button class="btn-primary danger" id="del">🗑️ Delete</button>' : ''}
-    <button class="btn-ghost" id="cancel">Cancel</button>`;
+    <h3>${existing ? tr('✏️ Edit money in', '✏️ Aaya edit') : tr('➕ Money In', '➕ Paisa Aaya')}</h3>
+    <div class="field"><label>${tr('Received in (account)', 'Kahan aaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
+    <div class="field"><label>${tr('Amount ₹', 'Amount ₹')}</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
+    <div class="field"><label>${tr('Source (where from)', 'Kahan se aaya (source)')}</label>${chipsHtml('src', SOURCES, t.source)}</div>
+    <div class="field"><label>${tr('From whom (name, optional)', 'Kisse (naam, optional)')}</label><input id="f-from" value="${esc(t.from_party || '')}" placeholder="${tr('person / bank', 'aadmi / bank')}" /></div>
+    <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
+    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="f-notes">${esc(t.notes || '')}</textarea></div>
+    <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
+    ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
+    <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
     bindChips(root, 'src');
     root.querySelector('#cancel').onclick = closeSheet;
@@ -838,7 +852,7 @@ function openInForm(existing) {
         payment_mode: acc && acc.type === 'Cash' ? 'Cash' : 'Net Banking',
         notes: root.querySelector('#f-notes').value.trim() || null
       };
-      if (!(rec.amount > 0)) return toast('Amount sahi daalein', true);
+      if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
       await saveTx(rec, !existing); closeSheet();
     };
   });
@@ -848,29 +862,29 @@ function openInForm(existing) {
 function openTransferForm(existing) {
   const t = existing || { id: uid(), type: 'Transfer', date: today(), account_id: (state.accounts.find((a) => a.type === 'Bank') || state.accounts[0] || {}).id, to_account_id: (state.accounts.find((a) => a.type === 'Cash') || state.accounts[0] || {}).id };
   const inner = `
-    <h3>${existing ? '✏️ Transfer edit' : '🔁 Transfer'}</h3>
-    <p class="muted" style="margin:0 2px 6px">Jaise: Bank se cash nikala, ya ek account se dusre me.</p>
-    <div class="field"><label>Kahan se (from)</label><select id="f-from">${accOptions(t.account_id)}</select></div>
-    <div class="field"><label>Kahan (to)</label><select id="f-to">${accOptions(t.to_account_id)}</select></div>
-    <div class="field"><label>Amount ₹</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
-    <div class="field"><label>Date</label><input id="f-date" type="date" value="${t.date}" /></div>
-    <div class="field"><label>Note</label><textarea id="f-notes">${esc(t.notes || '')}</textarea></div>
-    <button class="btn-primary" id="save">💾 Save</button>
-    ${existing ? '<button class="btn-primary danger" id="del">🗑️ Delete</button>' : ''}
-    <button class="btn-ghost" id="cancel">Cancel</button>`;
+    <h3>${existing ? tr('✏️ Edit transfer', '✏️ Transfer edit') : '🔁 ' + tr('Transfer', 'Transfer')}</h3>
+    <p class="muted" style="margin:0 2px 6px">${tr('E.g. cash withdrawn from bank, or one account to another.', 'Jaise: Bank se cash nikala, ya ek account se dusre me.')}</p>
+    <div class="field"><label>${tr('From', 'Kahan se (from)')}</label><select id="f-from">${accOptions(t.account_id)}</select></div>
+    <div class="field"><label>${tr('To', 'Kahan (to)')}</label><select id="f-to">${accOptions(t.to_account_id)}</select></div>
+    <div class="field"><label>${tr('Amount ₹', 'Amount ₹')}</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
+    <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
+    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="f-notes">${esc(t.notes || '')}</textarea></div>
+    <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
+    ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
+    <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = () => confirmDelete(t);
     root.querySelector('#save').onclick = async () => {
       const from = root.querySelector('#f-from').value, to = root.querySelector('#f-to').value;
-      if (from === to) return toast('From aur To alag account chuno', true);
+      if (from === to) return toast(tr('Choose different From and To accounts', 'From aur To alag account chuno'), true);
       const rec = {
         id: t.id, type: 'Transfer', date: root.querySelector('#f-date').value || today(),
         amount: parseFloat(root.querySelector('#f-amount').value) || 0,
         account_id: from, to_account_id: to, payment_mode: 'Transfer',
         notes: root.querySelector('#f-notes').value.trim() || null
       };
-      if (!(rec.amount > 0)) return toast('Amount sahi daalein', true);
+      if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
       await saveTx(rec, !existing); closeSheet();
     };
   });
@@ -879,29 +893,29 @@ function openTransferForm(existing) {
 /* =================== Entry detail (view/edit) =================== */
 function openEntryDetail(t) {
   const lines = [];
-  lines.push(['Type', { In: 'Paisa Aaya', Out: 'Kharcha', Transfer: 'Transfer' }[t.type]]);
-  lines.push(['Amount', inr(t.amount)]);
-  lines.push(['Date', fmtDate(t.date)]);
-  if (t.category) lines.push(['Category', t.category]);
-  if (t.item) lines.push(['Item', t.item]);
-  if (t.qty) lines.push(['Qty', `${t.qty} ${t.unit || ''}${t.rate ? ' @ ' + inr(t.rate) : ''}`]);
-  if (t.vendor) lines.push(['Vendor', t.vendor]);
-  if (t.source) lines.push(['Source', t.source]);
-  if (t.from_party) lines.push(['Kisse', t.from_party]);
+  lines.push([tr('Type', 'Type'), { In: tr('Money In', 'Paisa Aaya'), Out: tr('Expense', 'Kharcha'), Transfer: tr('Transfer', 'Transfer') }[t.type]]);
+  lines.push([tr('Amount', 'Amount'), inr(t.amount)]);
+  lines.push([tr('Date', 'Date'), fmtDate(t.date)]);
+  if (t.category) lines.push([tr('Category', 'Category'), t.category]);
+  if (t.item) lines.push([tr('Item', 'Item'), t.item]);
+  if (t.qty) lines.push([tr('Qty', 'Qty'), `${t.qty} ${t.unit || ''}${t.rate ? ' @ ' + inr(t.rate) : ''}`]);
+  if (t.vendor) lines.push([tr('Vendor', 'Vendor'), t.vendor]);
+  if (t.source) lines.push([tr('Source', 'Source'), t.source]);
+  if (t.from_party) lines.push([tr('From', 'Kisse'), t.from_party]);
   if (t.type === 'Transfer') lines.push(['', `${accName(t.account_id)} → ${accName(t.to_account_id)}`]);
-  else if (t.account_id) lines.push(['Account', accName(t.account_id)]);
-  if (t.payment_mode) lines.push(['Mode', t.payment_mode]);
-  if (t.contract_id) lines.push(['Theka', (state.contracts.find((c) => c.id === t.contract_id) || {}).thekedar_name || '—']);
-  if (t.notes) lines.push(['Note', t.notes]);
+  else if (t.account_id) lines.push([tr('Account', 'Account'), accName(t.account_id)]);
+  if (t.payment_mode) lines.push([tr('Mode', 'Mode'), t.payment_mode]);
+  if (t.contract_id) lines.push([tr('Theka', 'Theka'), (state.contracts.find((c) => c.id === t.contract_id) || {}).thekedar_name || '—']);
+  if (t.notes) lines.push([tr('Note', 'Note'), t.notes]);
 
   const isUdhaar = t.type === 'Out' && t.payment_mode === 'Udhaar';
   const inner = `
-    <h3>${CAT_ICON[t.category] || (t.type === 'In' ? '💰' : '🔁')} Detail</h3>
+    <h3>${CAT_ICON[t.category] || (t.type === 'In' ? '💰' : '🔁')} ${tr('Detail', 'Detail')}</h3>
     <div class="report-card">${lines.map(([k, v]) => `<div class="rrow"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>
-    ${isUdhaar ? '<button class="btn-primary" id="settle">✅ Udhaar chukaya (paid mark)</button>' : ''}
-    <button class="btn-secondary" id="edit" style="width:100%;margin-top:8px">✏️ Edit</button>
-    <button class="btn-primary danger" id="del">🗑️ Delete</button>
-    <button class="btn-ghost" id="cancel">Band karo</button>`;
+    ${isUdhaar ? `<button class="btn-primary" id="settle">✅ ${tr('Udhaar paid (mark)', 'Udhaar chukaya (paid mark)')}</button>` : ''}
+    <button class="btn-secondary" id="edit" style="width:100%;margin-top:8px">✏️ ${tr('Edit', 'Edit')}</button>
+    <button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>
+    <button class="btn-ghost" id="cancel">${tr('Close', 'Band karo')}</button>`;
   openSheet(inner, (root) => {
     root.querySelector('#cancel').onclick = closeSheet;
     root.querySelector('#del').onclick = () => confirmDelete(t);
@@ -912,19 +926,19 @@ function openEntryDetail(t) {
 
 function openSettleForm(t) {
   const inner = `
-    <h3>✅ Udhaar chukaya</h3>
-    <p class="muted" style="margin:0 2px 8px">${esc(t.vendor || 'Vendor')} ka ${inr(t.amount)} — ab kis account se aur kis mode se diya?</p>
-    <div class="field"><label>Account</label><select id="s-acc">${accOptions(t.account_id)}</select></div>
-    <div class="field"><label>Mode</label>${chipsHtml('smode', PAY_MODES.filter((m) => m !== 'Udhaar'), 'Cash')}</div>
-    <div class="field"><label>Date</label><input id="s-date" type="date" value="${today()}" /></div>
-    <button class="btn-primary" id="save">💾 Paid mark karo</button>
-    <button class="btn-ghost" id="cancel">Cancel</button>`;
+    <h3>✅ ${tr('Udhaar paid', 'Udhaar chukaya')}</h3>
+    <p class="muted" style="margin:0 2px 8px">${esc(t.vendor || tr('Vendor', 'Vendor'))} — ${inr(t.amount)}. ${tr('From which account and mode did you pay?', 'Ab kis account se aur kis mode se diya?')}</p>
+    <div class="field"><label>${tr('Account', 'Account')}</label><select id="s-acc">${accOptions(t.account_id)}</select></div>
+    <div class="field"><label>${tr('Mode', 'Mode')}</label>${chipsHtml('smode', PAY_MODES.filter((m) => m !== 'Udhaar'), 'Cash')}</div>
+    <div class="field"><label>${tr('Date', 'Date')}</label><input id="s-date" type="date" value="${today()}" /></div>
+    <button class="btn-primary" id="save">💾 ${tr('Mark paid', 'Paid mark karo')}</button>
+    <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
     bindChips(root, 'smode');
     root.querySelector('#cancel').onclick = closeSheet;
     root.querySelector('#save').onclick = async () => {
       const rec = Object.assign({}, t, { payment_mode: chipVal(root, 'smode'), account_id: root.querySelector('#s-acc').value, date: root.querySelector('#s-date').value || t.date });
-      await saveTx(rec, false); closeSheet(); toast('Udhaar paid mark ho gaya');
+      await saveTx(rec, false); closeSheet(); toast(tr('Udhaar marked paid', 'Udhaar paid mark ho gaya'));
     };
   });
 }
@@ -933,20 +947,20 @@ function openSettleForm(t) {
 function openThekaForm(existing) {
   const c = existing || { id: uid(), theka_amount: 0, start_date: today() };
   const inner = `
-    <h3>${existing ? '✏️ Theka edit' : '➕ Naya Theka'}</h3>
-    <div class="field"><label>Thekedar ka naam</label><input id="t-name" value="${esc(c.thekedar_name || '')}" placeholder="jaise Ram Mistry" /></div>
-    <div class="field"><label>Kaam (kis cheez ka theka)</label><input id="t-kaam" value="${esc(c.kaam || '')}" placeholder="jaise Civil / Chhat / Plaster" /></div>
-    <div class="field"><label>Theka amount ₹</label><input id="t-amt" type="number" inputmode="decimal" step="any" value="${c.theka_amount ?? ''}" placeholder="0" /></div>
-    <div class="field"><label>Shuru date</label><input id="t-date" type="date" value="${c.start_date || today()}" /></div>
-    <div class="field"><label>Note</label><textarea id="t-notes">${esc(c.notes || '')}</textarea></div>
-    <button class="btn-primary" id="save">💾 Save</button>
-    ${existing ? '<button class="btn-primary danger" id="del">🗑️ Delete</button>' : ''}
-    <button class="btn-ghost" id="cancel">Cancel</button>`;
+    <h3>${existing ? tr('✏️ Edit theka', '✏️ Theka edit') : tr('➕ New Theka', '➕ Naya Theka')}</h3>
+    <div class="field"><label>${tr('Thekedar name', 'Thekedar ka naam')}</label><input id="t-name" value="${esc(c.thekedar_name || '')}" placeholder="${tr('e.g. Ram Mistry', 'jaise Ram Mistry')}" /></div>
+    <div class="field"><label>${tr('Work (theka for what)', 'Kaam (kis cheez ka theka)')}</label><input id="t-kaam" value="${esc(c.kaam || '')}" placeholder="${tr('e.g. Civil / Roof / Plaster', 'jaise Civil / Chhat / Plaster')}" /></div>
+    <div class="field"><label>${tr('Theka amount ₹', 'Theka amount ₹')}</label><input id="t-amt" type="number" inputmode="decimal" step="any" value="${c.theka_amount ?? ''}" placeholder="0" /></div>
+    <div class="field"><label>${tr('Start date', 'Shuru date')}</label><input id="t-date" type="date" value="${c.start_date || today()}" /></div>
+    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="t-notes">${esc(c.notes || '')}</textarea></div>
+    <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
+    ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
+    <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = async () => {
       state.contracts = state.contracts.filter((x) => x.id !== c.id); cacheSet('contracts', state.contracts);
-      await deleteRow('contracts', c.id); closeSheet(); refresh(); toast('Theka delete');
+      await deleteRow('contracts', c.id); closeSheet(); refresh(); toast(tr('Theka deleted', 'Theka delete'));
     };
     root.querySelector('#save').onclick = async () => {
       const rec = {
@@ -957,7 +971,7 @@ function openThekaForm(existing) {
       const i = state.contracts.findIndex((x) => x.id === c.id);
       if (i >= 0) state.contracts[i] = rec; else state.contracts.push(rec);
       cacheSet('contracts', state.contracts);
-      await pushRow('contracts', rec); closeSheet(); refresh(); toast('Theka save');
+      await pushRow('contracts', rec); closeSheet(); refresh(); toast(tr('Theka saved', 'Theka save'));
     };
   });
 }
@@ -965,27 +979,27 @@ function openThekaForm(existing) {
 function openAccountForm(existing) {
   const a = existing || { id: uid(), type: 'Cash', opening_balance: 0 };
   const inner = `
-    <h3>${existing ? '✏️ Account edit' : '➕ Naya Account'}</h3>
-    <div class="field"><label>Naam</label><input id="a-name" value="${esc(a.name || '')}" placeholder="jaise HDFC Bank / Cash" /></div>
-    <div class="field"><label>Type</label>${chipsHtml('atype', ['Cash', 'Bank'], a.type)}</div>
-    <div class="field"><label>Opening balance ₹ (shuru me kitna tha)</label><input id="a-open" type="number" inputmode="decimal" step="any" value="${a.opening_balance ?? 0}" /></div>
-    <button class="btn-primary" id="save">💾 Save</button>
-    ${existing ? '<button class="btn-primary danger" id="del">🗑️ Delete</button>' : ''}
-    <button class="btn-ghost" id="cancel">Cancel</button>`;
+    <h3>${existing ? tr('✏️ Edit account', '✏️ Account edit') : tr('➕ New Account', '➕ Naya Account')}</h3>
+    <div class="field"><label>${tr('Name', 'Naam')}</label><input id="a-name" value="${esc(a.name || '')}" placeholder="${tr('e.g. HDFC Bank / Cash', 'jaise HDFC Bank / Cash')}" /></div>
+    <div class="field"><label>${tr('Type', 'Type')}</label>${chipsHtml('atype', ['Cash', 'Bank'], a.type)}</div>
+    <div class="field"><label>${tr('Opening balance ₹ (initial amount)', 'Opening balance ₹ (shuru me kitna tha)')}</label><input id="a-open" type="number" inputmode="decimal" step="any" value="${a.opening_balance ?? 0}" /></div>
+    <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
+    ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
+    <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
     bindChips(root, 'atype');
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = async () => {
-      if (state.transactions.some((t) => t.account_id === a.id || t.to_account_id === a.id)) return toast('Is account me entries hain, pehle hatao', true);
+      if (state.transactions.some((t) => t.account_id === a.id || t.to_account_id === a.id)) return toast(tr('This account has entries — remove them first', 'Is account me entries hain, pehle hatao'), true);
       state.accounts = state.accounts.filter((x) => x.id !== a.id); cacheSet('accounts', state.accounts);
-      await deleteRow('accounts', a.id); closeSheet(); refresh(); toast('Account delete');
+      await deleteRow('accounts', a.id); closeSheet(); refresh(); toast(tr('Account deleted', 'Account delete'));
     };
     root.querySelector('#save').onclick = async () => {
       const rec = { id: a.id, user_id: userId(), name: root.querySelector('#a-name').value.trim() || 'Account', type: chipVal(root, 'atype'), opening_balance: parseFloat(root.querySelector('#a-open').value) || 0 };
       const i = state.accounts.findIndex((x) => x.id === a.id);
       if (i >= 0) state.accounts[i] = rec; else state.accounts.push(rec);
       cacheSet('accounts', state.accounts);
-      await pushRow('accounts', rec); closeSheet(); refresh(); toast('Account save');
+      await pushRow('accounts', rec); closeSheet(); refresh(); toast(tr('Account saved', 'Account save'));
     };
   });
 }
@@ -1003,14 +1017,14 @@ async function saveTx(rec, isNew) {
   refresh();
   await pushRow('transactions', rec);
   renderHeader();
-  toast(isNew ? 'Entry save ho gayi ✅' : 'Update ho gaya ✅');
+  toast(isNew ? tr('Entry saved ✅', 'Entry save ho gayi ✅') : tr('Updated ✅', 'Update ho gaya ✅'));
 }
 function confirmDelete(t) {
-  if (!confirm('Ye entry delete karein?')) return;
+  if (!confirm(tr('Delete this entry?', 'Ye entry delete karein?'))) return;
   state.transactions = state.transactions.filter((x) => x.id !== t.id);
   cacheSet('transactions', state.transactions);
   deleteRow('transactions', t.id);
-  closeSheet(); refresh(); toast('Delete ho gaya');
+  closeSheet(); refresh(); toast(tr('Deleted', 'Delete ho gaya'));
 }
 
 /* ============================ Export ============================ */
@@ -1031,11 +1045,11 @@ function exportCSV() {
     return '"' + v.replace(/"/g, '""') + '"';
   }).join(','));
   download('pai-pai-' + today() + '.csv', '﻿' + head + '\n' + rows.join('\n'), 'text/csv;charset=utf-8');
-  toast('CSV download ho gaya');
+  toast(tr('CSV downloaded', 'CSV download ho gaya'));
 }
 function exportJSON() {
   download('pai-pai-backup-' + today() + '.json', JSON.stringify({ accounts: state.accounts, contracts: state.contracts, transactions: state.transactions, exported: today() }, null, 2), 'application/json');
-  toast('Backup download ho gaya');
+  toast(tr('Backup downloaded', 'Backup download ho gaya'));
 }
 
 /* ============================== AUTH ============================ */
@@ -1047,62 +1061,68 @@ function renderAuth() {
   if (state.authStep === 'config') {
     body = `
       <div class="auth-card">
-        <p class="muted">Pehli baar setup: apna Supabase <b>Project URL</b> aur <b>anon key</b> daalein. (README me steps hain.)</p>
-        <div class="field"><label>Project URL</label><input id="cfg-url" placeholder="https://xxxx.supabase.co" autocapitalize="off" autocorrect="off" /></div>
-        <div class="field"><label>Anon public key</label><input id="cfg-key" placeholder="eyJhbGci..." autocapitalize="off" autocorrect="off" /></div>
-        <button class="btn-primary" id="cfg-save">Aage badho →</button>
+        <p class="muted">${tr('First-time setup: enter your Supabase <b>Project URL</b> and <b>anon key</b>. (Steps in README.)', 'Pehli baar setup: apna Supabase <b>Project URL</b> aur <b>anon key</b> daalein. (README me steps hain.)')}</p>
+        <div class="field"><label>${tr('Project URL', 'Project URL')}</label><input id="cfg-url" placeholder="https://xxxx.supabase.co" autocapitalize="off" autocorrect="off" /></div>
+        <div class="field"><label>${tr('Anon public key', 'Anon public key')}</label><input id="cfg-key" placeholder="eyJhbGci..." autocapitalize="off" autocorrect="off" /></div>
+        <button class="btn-primary" id="cfg-save">${tr('Continue →', 'Aage badho →')}</button>
       </div>`;
   } else {
     body = `
       <div class="auth-card">
-        <p class="muted">Email aur password se login karein. Pehli baar? Niche <b>"Naya account banao"</b>.</p>
-        <div class="field"><label>Email</label><input id="au-email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="aap@example.com" value="${esc(state.authEmail)}" /></div>
-        <div class="field"><label>Password</label><input id="au-pass" type="password" autocapitalize="off" autocorrect="off" autocomplete="current-password" placeholder="kam se kam 6 character" /></div>
-        <button class="btn-primary" id="au-login">Login</button>
-        <button class="btn-secondary" id="au-signup" style="width:100%;margin-top:8px">Naya account banao</button>
-        <button class="btn-ghost" id="au-recfg">Cloud config badlo</button>
+        <p class="muted">${tr('Log in with email and password. First time? Tap <b>"Create account"</b> below.', 'Email aur password se login karein. Pehli baar? Niche <b>"Naya account banao"</b>.')}</p>
+        <div class="field"><label>${tr('Email', 'Email')}</label><input id="au-email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="you@example.com" value="${esc(state.authEmail)}" /></div>
+        <div class="field"><label>${tr('Password', 'Password')}</label><input id="au-pass" type="password" autocapitalize="off" autocorrect="off" autocomplete="current-password" placeholder="${tr('at least 6 characters', 'kam se kam 6 character')}" /></div>
+        <button class="btn-primary" id="au-login">${tr('Log in', 'Login')}</button>
+        <button class="btn-secondary" id="au-signup" style="width:100%;margin-top:8px">${tr('Create account', 'Naya account banao')}</button>
+        <button class="btn-ghost" id="au-recfg">${tr('Change cloud config', 'Cloud config badlo')}</button>
       </div>`;
   }
 
   app().innerHTML = `
     <div class="auth-wrap">
+      <div class="seg-toggle" id="auth-lang" style="margin:0 auto 18px">
+        <button class="${lang === 'en' ? 'on' : ''}" data-l="en">English</button>
+        <button class="${lang === 'hi' ? 'on' : ''}" data-l="hi">Hinglish</button>
+      </div>
       <img class="auth-logo" src="icons/icon-192.png" alt="logo" />
       <h1>Pai-Pai</h1>
-      <p class="lead">Ghar banane ka pura hisaab — har pai ka, ek surakshit jagah.</p>
+      <p class="lead">${tr('The complete record of building your home — every rupee, in one safe place.', 'Ghar banane ka pura hisaab — har pai ka, ek surakshit jagah.')}</p>
       ${body}
-      <p class="muted mt16">🔒 Aapka data surakshit — sirf aapko dikhega.</p>
+      <p class="muted mt16">🔒 ${tr('Your data is secure — visible only to you.', 'Aapka data surakshit — sirf aapko dikhega.')}</p>
     </div>`;
+
+  $('#auth-lang').querySelectorAll('button').forEach((b) => b.onclick = () => { if (b.dataset.l !== lang) { setLang(b.dataset.l); renderAuth(); } });
 
   if (state.authStep === 'config') {
     $('#cfg-save').onclick = () => {
       const url = $('#cfg-url').value, key = $('#cfg-key').value;
-      if (!url || !key) return toast('Dono daalein', true);
-      setCfg(url, key); if (!initClient()) return toast('Config galat lagti hai', true);
-      state.authStep = 'email'; renderAuth();
+      if (!url || !key) return toast(tr('Enter both', 'Dono daalein'), true);
+      setCfg(url, key); if (!initClient()) return toast(tr('Config looks invalid', 'Config galat lagti hai'), true);
+      state.authStep = 'login'; renderAuth();
     };
   } else {
     $('#au-recfg').onclick = () => { state.authStep = 'config'; renderAuth(); };
     const creds = () => ({ email: $('#au-email').value.trim(), password: $('#au-pass').value });
     $('#au-login').onclick = async () => {
       const { email, password } = creds();
-      if (!email || !password) return toast('Email aur password daalein', true);
-      state.authEmail = email; const btn = $('#au-login'); btn.textContent = 'Login ho raha…'; btn.disabled = true;
+      if (!email || !password) return toast(tr('Enter email and password', 'Email aur password daalein'), true);
+      state.authEmail = email; const btn = $('#au-login'); btn.textContent = tr('Logging in…', 'Login ho raha…'); btn.disabled = true;
       try {
         const { data, error } = await sb.auth.signInWithPassword({ email, password });
         if (error) throw error;
         state.session = data.session; await enterApp();
-      } catch (e) { console.error(e); toast(e.message || 'Login fail — email/password check karein', true); btn.textContent = 'Login'; btn.disabled = false; }
+      } catch (e) { console.error(e); toast(e.message || tr('Login failed — check email/password', 'Login fail — email/password check karein'), true); btn.textContent = tr('Log in', 'Login'); btn.disabled = false; }
     };
     $('#au-signup').onclick = async () => {
       const { email, password } = creds();
-      if (!email || password.length < 6) return toast('Email + password (6+ character) daalein', true);
-      state.authEmail = email; const btn = $('#au-signup'); btn.textContent = 'Ban raha…'; btn.disabled = true;
+      if (!email || password.length < 6) return toast(tr('Enter email + password (6+ characters)', 'Email + password (6+ character) daalein'), true);
+      state.authEmail = email; const btn = $('#au-signup'); btn.textContent = tr('Creating…', 'Ban raha…'); btn.disabled = true;
       try {
         const { data, error } = await sb.auth.signUp({ email, password });
         if (error) throw error;
         if (data.session) { state.session = data.session; await enterApp(); }
-        else { toast('Account ban gaya — ab "Login" dabao', false); btn.textContent = 'Naya account banao'; btn.disabled = false; }
-      } catch (e) { console.error(e); toast(e.message || 'Account banane me dikkat', true); btn.textContent = 'Naya account banao'; btn.disabled = false; }
+        else { toast(tr('Account created — now tap "Log in"', 'Account ban gaya — ab "Login" dabao'), false); btn.textContent = tr('Create account', 'Naya account banao'); btn.disabled = false; }
+      } catch (e) { console.error(e); toast(e.message || tr('Sign-up failed', 'Account banane me dikkat'), true); btn.textContent = tr('Create account', 'Naya account banao'); btn.disabled = false; }
     };
   }
 }
@@ -1110,7 +1130,7 @@ function renderAuth() {
 /* ============================ Bootstrap ========================= */
 async function enterApp() {
   buildShell();
-  app().querySelector('#screen').innerHTML = `<div class="full-loader"><div class="spinner"></div>Data load ho raha hai…</div>`;
+  app().querySelector('#screen').innerHTML = `<div class="full-loader"><div class="spinner"></div>${tr('Loading data…', 'Data load ho raha hai…')}</div>`;
   renderHeader();
   await loadAll();
   show('dashboard');
