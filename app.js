@@ -947,7 +947,7 @@ function exportJSON() {
 /* ============================== AUTH ============================ */
 function renderAuth() {
   if (!cfgValid()) state.authStep = 'config';
-  else if (state.authStep === 'config') state.authStep = 'email';
+  else if (state.authStep === 'config') state.authStep = 'login';
 
   let body = '';
   if (state.authStep === 'config') {
@@ -958,21 +958,15 @@ function renderAuth() {
         <div class="field"><label>Anon public key</label><input id="cfg-key" placeholder="eyJhbGci..." autocapitalize="off" autocorrect="off" /></div>
         <button class="btn-primary" id="cfg-save">Aage badho →</button>
       </div>`;
-  } else if (state.authStep === 'email') {
-    body = `
-      <div class="auth-card">
-        <p class="muted">Apni email daalein — 6-digit code aayega.</p>
-        <div class="field"><label>Email</label><input id="au-email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="aap@example.com" value="${esc(state.authEmail)}" /></div>
-        <button class="btn-primary" id="au-send">Code bhejo</button>
-        <button class="btn-ghost" id="au-recfg">Cloud config badlo</button>
-      </div>`;
   } else {
     body = `
       <div class="auth-card">
-        <p class="muted"><b>${esc(state.authEmail)}</b> par bheja 6-digit code daalein.</p>
-        <div class="field"><label>Code</label><input id="au-otp" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" /></div>
-        <button class="btn-primary" id="au-verify">Login</button>
-        <button class="btn-ghost" id="au-back">← Email badlo</button>
+        <p class="muted">Email aur password se login. Pehli baar ho to neeche <b>"Naya account banao"</b> dabao.</p>
+        <div class="field"><label>Email</label><input id="au-email" type="email" inputmode="email" autocapitalize="off" autocorrect="off" placeholder="aap@example.com" value="${esc(state.authEmail)}" /></div>
+        <div class="field"><label>Password</label><input id="au-pass" type="password" autocapitalize="off" autocorrect="off" autocomplete="current-password" placeholder="kam se kam 6 character" /></div>
+        <button class="btn-primary" id="au-login">Login</button>
+        <button class="btn-secondary" id="au-signup" style="width:100%;margin-top:8px">Naya account banao</button>
+        <button class="btn-ghost" id="au-recfg">Cloud config badlo</button>
       </div>`;
   }
 
@@ -992,28 +986,29 @@ function renderAuth() {
       setCfg(url, key); if (!initClient()) return toast('Config galat lagti hai', true);
       state.authStep = 'email'; renderAuth();
     };
-  } else if (state.authStep === 'email') {
-    $('#au-recfg').onclick = () => { state.authStep = 'config'; renderAuth(); };
-    $('#au-send').onclick = async () => {
-      const email = $('#au-email').value.trim(); if (!email) return toast('Email daalein', true);
-      state.authEmail = email; const btn = $('#au-send'); btn.textContent = 'Bhej rahe…'; btn.disabled = true;
-      try {
-        const { error } = await sb.auth.signInWithOtp({ email, options: { shouldCreateUser: true } });
-        if (error) throw error;
-        state.authStep = 'otp'; renderAuth(); toast('Code email par bhej diya');
-      } catch (e) { console.error(e); toast(e.message || 'Code bhejne me dikkat', true); btn.textContent = 'Code bhejo'; btn.disabled = false; }
-    };
   } else {
-    $('#au-back').onclick = () => { state.authStep = 'email'; renderAuth(); };
-    $('#au-verify').onclick = async () => {
-      const token = $('#au-otp').value.trim(); if (token.length < 6) return toast('6-digit code daalein', true);
-      const btn = $('#au-verify'); btn.textContent = 'Check…'; btn.disabled = true;
+    $('#au-recfg').onclick = () => { state.authStep = 'config'; renderAuth(); };
+    const creds = () => ({ email: $('#au-email').value.trim(), password: $('#au-pass').value });
+    $('#au-login').onclick = async () => {
+      const { email, password } = creds();
+      if (!email || !password) return toast('Email aur password daalein', true);
+      state.authEmail = email; const btn = $('#au-login'); btn.textContent = 'Login ho raha…'; btn.disabled = true;
       try {
-        const { data, error } = await sb.auth.verifyOtp({ email: state.authEmail, token, type: 'email' });
+        const { data, error } = await sb.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        state.session = data.session; // onAuthStateChange bhi chalega
-        await enterApp();
-      } catch (e) { console.error(e); toast(e.message || 'Code galat', true); btn.textContent = 'Login'; btn.disabled = false; }
+        state.session = data.session; await enterApp();
+      } catch (e) { console.error(e); toast(e.message || 'Login fail — email/password check karein', true); btn.textContent = 'Login'; btn.disabled = false; }
+    };
+    $('#au-signup').onclick = async () => {
+      const { email, password } = creds();
+      if (!email || password.length < 6) return toast('Email + password (6+ character) daalein', true);
+      state.authEmail = email; const btn = $('#au-signup'); btn.textContent = 'Ban raha…'; btn.disabled = true;
+      try {
+        const { data, error } = await sb.auth.signUp({ email, password });
+        if (error) throw error;
+        if (data.session) { state.session = data.session; await enterApp(); }
+        else { toast('Account ban gaya — ab "Login" dabao', false); btn.textContent = 'Naya account banao'; btn.disabled = false; }
+      } catch (e) { console.error(e); toast(e.message || 'Account banane me dikkat', true); btn.textContent = 'Naya account banao'; btn.disabled = false; }
     };
   }
 }
@@ -1050,7 +1045,7 @@ async function start() {
   } catch (e) { console.warn(e); }
   sb.auth.onAuthStateChange((_ev, session) => {
     state.session = session;
-    if (!session) { state.authStep = cfgValid() ? 'email' : 'config'; renderAuth(); }
+    if (!session) { state.authStep = cfgValid() ? 'login' : 'config'; renderAuth(); }
   });
   if (state.session) await enterApp(); else renderAuth();
 }
