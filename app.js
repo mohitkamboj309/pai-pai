@@ -650,6 +650,7 @@ function screenSettings() {
       </div>
       <button class="btn-secondary" id="sync-now" style="width:100%;margin-top:8px">🔄 ${tr('Sync now', 'Abhi Sync karo')}</button>
       <button class="btn-secondary" id="import-btn" style="width:100%;margin-top:8px">📥 ${tr('Import entries (JSON)', 'Entries import (JSON)')}</button>
+      <button class="btn-ghost" id="clear-all" style="width:100%;margin-top:8px;color:var(--red);border-color:#f3c9c4">🗑️ ${tr('Clear all data', 'Sab data clear karo')}</button>
 
       <div class="section-label">${tr('Cloud (Supabase)', 'Cloud (Supabase)')}</div>
       <div class="field"><label>${tr('Project URL', 'Project URL')}</label><input id="cfg-url" value="${esc(c.url)}" placeholder="https://xxxx.supabase.co" autocapitalize="off" autocorrect="off" /></div>
@@ -672,6 +673,7 @@ function screenSettings() {
     $('#exp-csv').onclick = exportCSV;
     $('#sync-now').onclick = async () => { toast(tr('Syncing…', 'Sync…')); await flushQueue(); await loadAll(); refresh(); toast(tr('Done', 'Ho gaya')); };
     $('#import-btn').onclick = openImportForm;
+    $('#clear-all').onclick = clearAllData;
     $('#save-cfg').onclick = () => {
       const url = $('#cfg-url').value, key = $('#cfg-key').value;
       if (!url || !key) return toast(tr('Enter both URL and key', 'URL aur key dono daalein'), true);
@@ -987,6 +989,12 @@ function openThekaForm(existing) {
     <h3>${existing ? tr('✏️ Edit theka', '✏️ Theka edit') : tr('➕ New Theka', '➕ Naya Theka')}</h3>
     <div class="field"><label>${tr('Thekedar name', 'Thekedar ka naam')}</label><input id="t-name" value="${esc(c.thekedar_name || '')}" placeholder="${tr('e.g. Ram Mistry', 'jaise Ram Mistry')}" /></div>
     <div class="field"><label>${tr('Work (theka for what)', 'Kaam (kis cheez ka theka)')}</label><input id="t-kaam" value="${esc(c.kaam || '')}" placeholder="${tr('e.g. Civil / Roof / Plaster', 'jaise Civil / Chhat / Plaster')}" /></div>
+
+    <div class="section-label" style="margin-top:8px">${tr('Amount from sq-ft (optional)', 'Sq-ft se amount (optional)')}</div>
+    <div class="row2"><div class="field"><label>${tr('Ground sqft', 'Ground sqft')}</label><input id="t-g-area" type="number" inputmode="decimal" placeholder="0" /></div><div class="field"><label>${tr('₹ / sqft', '₹ / sqft')}</label><input id="t-g-rate" type="number" inputmode="decimal" value="160" /></div></div>
+    <div class="row2"><div class="field"><label>${tr('1st floor sqft', '1st floor sqft')}</label><input id="t-f-area" type="number" inputmode="decimal" placeholder="0" /></div><div class="field"><label>${tr('₹ / sqft', '₹ / sqft')}</label><input id="t-f-rate" type="number" inputmode="decimal" value="180" /></div></div>
+    <div class="amt-preview" id="t-sqft-prev"></div>
+
     <div class="field"><label>${tr('Theka amount ₹', 'Theka amount ₹')}</label><input id="t-amt" type="number" inputmode="decimal" step="any" value="${c.theka_amount ?? ''}" placeholder="0" /></div>
     <div class="field"><label>${tr('Start date', 'Shuru date')}</label><input id="t-date" type="date" value="${c.start_date || today()}" /></div>
     <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="t-notes">${esc(c.notes || '')}</textarea></div>
@@ -994,6 +1002,16 @@ function openThekaForm(existing) {
     ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
+    // Sq-ft calculator: ground × rate + 1st × rate → theka amount auto
+    const gArea = root.querySelector('#t-g-area'), gRate = root.querySelector('#t-g-rate'), fArea = root.querySelector('#t-f-area'), fRate = root.querySelector('#t-f-rate'), amtEl = root.querySelector('#t-amt'), sqPrev = root.querySelector('#t-sqft-prev');
+    const calcSqft = () => {
+      const ga = parseFloat(gArea.value) || 0, gr = parseFloat(gRate.value) || 0, fa = parseFloat(fArea.value) || 0, fr = parseFloat(fRate.value) || 0;
+      if (!ga && !fa) { sqPrev.textContent = ''; return; }
+      const total = ga * gr + fa * fr; amtEl.value = total;
+      sqPrev.innerHTML = `${ga ? ga + '×₹' + gr : ''}${ga && fa ? ' + ' : ''}${fa ? fa + '×₹' + fr : ''} = <b>${inr(total)}</b>`;
+    };
+    gArea.oninput = calcSqft; gRate.oninput = calcSqft; fArea.oninput = calcSqft; fRate.oninput = calcSqft;
+
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = async () => {
       state.contracts = state.contracts.filter((x) => x.id !== c.id); cacheSet('contracts', state.contracts);
@@ -1097,10 +1115,10 @@ async function resolveAccount(type) {
   if (!a) { a = { id: uid(), user_id: userId(), name: type === 'Bank' ? 'Bank' : 'Cash (haath)', type: type, opening_balance: 0 }; state.accounts.push(a); cacheSet('accounts', state.accounts); await pushRow('accounts', a); }
   return a.id;
 }
-async function resolveTheka(name, startDate, kaam) {
+async function resolveTheka(name, startDate, kaam, amount, note) {
   if (!name) return null;
   let c = state.contracts.find((x) => (x.thekedar_name || '').toLowerCase() === name.toLowerCase());
-  if (!c) { c = { id: uid(), user_id: userId(), thekedar_name: name, kaam: kaam || 'Mistry / Theka', theka_amount: 0, start_date: startDate || today() }; state.contracts.push(c); cacheSet('contracts', state.contracts); await pushRow('contracts', c); }
+  if (!c) { c = { id: uid(), user_id: userId(), thekedar_name: name, kaam: kaam || 'Mistry / Theka', theka_amount: Number(amount) || 0, start_date: startDate || today(), notes: note || null }; state.contracts.push(c); cacheSet('contracts', state.contracts); await pushRow('contracts', c); }
   return c.id;
 }
 function openImportForm() {
@@ -1121,7 +1139,7 @@ function openImportForm() {
       for (const it of arr) {
         const amt = Number(it.amount) || 0; if (!(amt > 0)) continue;
         const accId = it.mode === 'Udhaar' ? null : await resolveAccount(it.acc);
-        const cid = await resolveTheka(it.theka, it.date, it.theka_kaam);
+        const cid = await resolveTheka(it.theka, it.date, it.theka_kaam, it.theka_amount, it.theka_note);
         const rec = {
           id: uid(), user_id: userId(), type: it.type || 'Out', date: it.date || today(), amount: amt,
           category: it.category || null, item: it.item || null,
@@ -1139,6 +1157,22 @@ function openImportForm() {
       closeSheet(); refresh(); toast(tr(n + ' entries imported ✅', n + ' entries import ho gayi ✅'));
     };
   });
+}
+
+// Saari entries + thekas delete (accounts rehne do). Cloud se bhi hata do.
+async function clearAllData() {
+  if (!confirm(tr('Delete ALL entries and thekas? This cannot be undone.', 'Saari entries aur thekas delete kar du? Wapas nahi aayenge.'))) return;
+  state.transactions = []; state.contracts = [];
+  cacheSet('transactions', []); cacheSet('contracts', []);
+  localStorage.removeItem('gk_pending');
+  refresh();
+  if (sb && state.online) {
+    try {
+      await sb.from('transactions').delete().eq('user_id', userId());
+      await sb.from('contracts').delete().eq('user_id', userId());
+    } catch (e) { console.warn('clear', e); }
+  }
+  toast(tr('All data cleared', 'Sab data clear ho gaya'));
 }
 
 /* ============================== AUTH ============================ */
