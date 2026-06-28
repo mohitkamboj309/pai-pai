@@ -602,7 +602,8 @@ function screenTheka() {
           const pct = amt ? Math.min(100, Math.round(paid / amt * 100)) : 0;
           return `<div class="report-card" data-id="${c.id}" style="cursor:pointer">
             <h4>🤝 ${esc(c.thekedar_name || tr('Thekedar', 'Thekedar'))}</h4>
-            ${c.kaam ? `<div class="muted" style="margin:-4px 0 8px">${esc(c.kaam)}</div>` : ''}
+            ${c.kaam ? `<div class="muted" style="margin:-4px 0 4px">${esc(c.kaam)}</div>` : ''}
+            ${sqftLabel(c.notes) ? `<div class="muted" style="margin:0 0 8px">📐 ${esc(sqftLabel(c.notes))}</div>` : ''}
             <div class="rrow"><div class="k">${tr('Theka amount', 'Theka amount')}</div><div class="v">${inr(amt)}</div></div>
             <div class="rrow"><div class="k">${tr('Paid', 'Diya')}</div><div class="v" style="color:#1f7a4d">${inr(paid)}</div></div>
             <div class="rrow"><div class="k">${tr('Left', 'Baaki')}</div><div class="v" style="color:${baaki > 0 ? '#c0392b' : '#1f7a4d'}">${inr(baaki)}</div></div>
@@ -983,8 +984,29 @@ function openSettleForm(t) {
 }
 
 /* ===================== FORM: Theka / Account ==================== */
+// Theka notes me sq-ft breakdown chhupa ke store/parse (bina nayi DB column ke)
+function parseSqft(notes) {
+  const m = (notes || '').match(/\[\[sqft:(\{.*?\})\]\]/);
+  let sqft = null, text = notes || '';
+  if (m) { try { sqft = JSON.parse(m[1]); } catch (_) { } text = (notes || '').replace(/\s*\[\[sqft:\{.*?\}\]\]/, '').trim(); }
+  return { text, sqft };
+}
+function buildNote(text, sqft) {
+  let n = (text || '').trim();
+  if (sqft && (Number(sqft.ga) || Number(sqft.fa))) n = (n ? n + ' ' : '') + '[[sqft:' + JSON.stringify(sqft) + ']]';
+  return n || null;
+}
+function sqftLabel(notes) {
+  const s = parseSqft(notes).sqft; if (!s) return '';
+  const g = Number(s.ga) || 0, gr = Number(s.gr) || 0, f = Number(s.fa) || 0, fr = Number(s.fr) || 0;
+  const parts = [];
+  if (g) parts.push(`G ${g}×₹${gr}`);
+  if (f) parts.push(`1st ${f}×₹${fr}`);
+  return parts.join(' + ');
+}
 function openThekaForm(existing) {
   const c = existing || { id: uid(), theka_amount: 0, start_date: today() };
+  const sp = parseSqft(c.notes);
   const inner = `
     <h3>${existing ? tr('✏️ Edit theka', '✏️ Theka edit') : tr('➕ New Theka', '➕ Naya Theka')}</h3>
     <div class="field"><label>${tr('Thekedar name', 'Thekedar ka naam')}</label><input id="t-name" value="${esc(c.thekedar_name || '')}" placeholder="${tr('e.g. Ram Mistry', 'jaise Ram Mistry')}" /></div>
@@ -997,7 +1019,7 @@ function openThekaForm(existing) {
 
     <div class="field"><label>${tr('Theka amount ₹', 'Theka amount ₹')}</label><input id="t-amt" type="number" inputmode="decimal" step="any" value="${c.theka_amount ?? ''}" placeholder="0" /></div>
     <div class="field"><label>${tr('Start date', 'Shuru date')}</label><input id="t-date" type="date" value="${c.start_date || today()}" /></div>
-    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="t-notes">${esc(c.notes || '')}</textarea></div>
+    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="t-notes">${esc(sp.text || '')}</textarea></div>
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
     ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
@@ -1011,6 +1033,14 @@ function openThekaForm(existing) {
       sqPrev.innerHTML = `${ga ? ga + '×₹' + gr : ''}${ga && fa ? ' + ' : ''}${fa ? fa + '×₹' + fr : ''} = <b>${inr(total)}</b>`;
     };
     gArea.oninput = calcSqft; gRate.oninput = calcSqft; fArea.oninput = calcSqft; fRate.oninput = calcSqft;
+    // pehle save ki hui sqft details wapas bhar do
+    if (sp.sqft) {
+      if (sp.sqft.ga != null) gArea.value = sp.sqft.ga;
+      if (sp.sqft.gr != null) gRate.value = sp.sqft.gr;
+      if (sp.sqft.fa != null) fArea.value = sp.sqft.fa;
+      if (sp.sqft.fr != null) fRate.value = sp.sqft.fr;
+      calcSqft();
+    }
 
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = async () => {
@@ -1021,7 +1051,8 @@ function openThekaForm(existing) {
       const rec = {
         id: c.id, user_id: userId(), thekedar_name: root.querySelector('#t-name').value.trim() || null,
         kaam: root.querySelector('#t-kaam').value.trim() || null, theka_amount: parseFloat(root.querySelector('#t-amt').value) || 0,
-        start_date: root.querySelector('#t-date').value || null, notes: root.querySelector('#t-notes').value.trim() || null
+        start_date: root.querySelector('#t-date').value || null,
+        notes: buildNote(root.querySelector('#t-notes').value, { ga: parseFloat(gArea.value) || 0, gr: parseFloat(gRate.value) || 0, fa: parseFloat(fArea.value) || 0, fr: parseFloat(fRate.value) || 0 })
       };
       const i = state.contracts.findIndex((x) => x.id === c.id);
       if (i >= 0) state.contracts[i] = rec; else state.contracts.push(rec);
