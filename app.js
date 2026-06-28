@@ -1097,10 +1097,10 @@ async function resolveAccount(type) {
   if (!a) { a = { id: uid(), user_id: userId(), name: type === 'Bank' ? 'Bank' : 'Cash (haath)', type: type, opening_balance: 0 }; state.accounts.push(a); cacheSet('accounts', state.accounts); await pushRow('accounts', a); }
   return a.id;
 }
-async function resolveTheka(name, startDate) {
+async function resolveTheka(name, startDate, kaam) {
   if (!name) return null;
   let c = state.contracts.find((x) => (x.thekedar_name || '').toLowerCase() === name.toLowerCase());
-  if (!c) { c = { id: uid(), user_id: userId(), thekedar_name: name, kaam: 'Mistry / Theka', theka_amount: 0, start_date: startDate || today() }; state.contracts.push(c); cacheSet('contracts', state.contracts); await pushRow('contracts', c); }
+  if (!c) { c = { id: uid(), user_id: userId(), thekedar_name: name, kaam: kaam || 'Mistry / Theka', theka_amount: 0, start_date: startDate || today() }; state.contracts.push(c); cacheSet('contracts', state.contracts); await pushRow('contracts', c); }
   return c.id;
 }
 function openImportForm() {
@@ -1121,7 +1121,7 @@ function openImportForm() {
       for (const it of arr) {
         const amt = Number(it.amount) || 0; if (!(amt > 0)) continue;
         const accId = it.mode === 'Udhaar' ? null : await resolveAccount(it.acc);
-        const cid = await resolveTheka(it.theka, it.date);
+        const cid = await resolveTheka(it.theka, it.date, it.theka_kaam);
         const rec = {
           id: uid(), user_id: userId(), type: it.type || 'Out', date: it.date || today(), amount: amt,
           category: it.category || null, item: it.item || null,
