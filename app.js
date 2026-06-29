@@ -73,6 +73,8 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, (c) =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
+// Paise tak round — store karne se pehle (warna 2.2×3000 = 6600.000000000001 jaisa float ban jaata)
+function money(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 function inr(n) {
   n = Math.round((Number(n) || 0) * 100) / 100;   // pehle round, fir sign (taaki −₹0 na bane)
   const neg = n < 0; n = Math.abs(n);
@@ -104,7 +106,7 @@ function cacheGet(tbl) { try { return JSON.parse(localStorage.getItem('gk_cache_
 function cacheSet(tbl, rows) { localStorage.setItem('gk_cache_' + tbl, JSON.stringify(rows)); }
 function queueGet() { try { return JSON.parse(localStorage.getItem('gk_pending') || '[]'); } catch (_) { return []; } }
 function queueSet(q) { localStorage.setItem('gk_pending', JSON.stringify(q)); }
-function enqueue(op) { const q = queueGet(); q.push(op); queueSet(q); }
+function enqueue(op) { if (!op._qid) op._qid = uid(); const q = queueGet(); q.push(op); queueSet(q); }
 function pendingCount() { return queueGet().length; }
 // Server fetch ke baad bhi jo writes sync nahi hui (queue me padi hain) unhe rows me wapas mila do,
 // warna user ki abhi-ki entry server-data se mit jaati thi (dikhna band ho jaati thi).
@@ -172,22 +174,31 @@ function initClient() {
   } catch (e) { console.error(e); return false; }
 }
 
+let flushing = false;
 async function flushQueue() {
-  if (!sb || !state.online) return;
-  let q = queueGet(); if (!q.length) return;
-  const remaining = [];
-  for (const op of q) {
-    try {
-      if (op.type === 'upsert') {
-        const { error } = await sb.from(op.table).upsert(op.row);
-        if (error) throw error;
-      } else if (op.type === 'delete') {
-        const { error } = await sb.from(op.table).delete().eq('id', op.id);
-        if (error) throw error;
-      }
-    } catch (e) { console.warn('sync fail', e); remaining.push(op); }
-  }
-  queueSet(remaining);
+  if (!sb || !state.online || flushing) return;   // ek hi flush ek baar (overlap se data loss bachao)
+  flushing = true;
+  try {
+    let q = queueGet(); if (!q.length) return;
+    let mutated = false;                // purani (bina id) ops ko bhi id do taaki theek se hat sakein
+    for (const op of q) { if (!op._qid) { op._qid = uid(); mutated = true; } }
+    if (mutated) queueSet(q);
+    const doneIds = new Set();          // sirf jo sach me sync ho gaye, sirf unhe queue se hatao
+    for (const op of q) {
+      try {
+        if (op.type === 'upsert') {
+          const { error } = await sb.from(op.table).upsert(op.row);
+          if (error) throw error;
+        } else if (op.type === 'delete') {
+          const { error } = await sb.from(op.table).delete().eq('id', op.id);
+          if (error) throw error;
+        }
+        if (op._qid) doneIds.add(op._qid);
+      } catch (e) { console.warn('sync fail', e); }
+    }
+    // queue dobara padho (flush ke beech jo nayi entry aayi wo bhi safe rahe) — sirf done ops hatao
+    queueSet(queueGet().filter((op) => !(op._qid && doneIds.has(op._qid))));
+  } finally { flushing = false; }
 }
 
 async function pushRow(table, row) {
@@ -221,10 +232,14 @@ async function loadAll() {
         sb.from('contracts').select('*').order('created_at', { ascending: true }),
         sb.from('transactions').select('*').order('date', { ascending: false }).order('created_at', { ascending: false })
       ]);
-      if (!a.error && a.data) { state.accounts = mergePending('accounts', a.data); cacheSet('accounts', state.accounts); }
+      if (!a.error && a.data) {
+        state.accounts = mergePending('accounts', a.data); cacheSet('accounts', state.accounts);
+        // Default accounts SIRF tab banao jab fetch sach me chala aur 0 rows aaye — fetch error par
+        // nahi (warna purane user ko duplicate phantom accounts mil jaate the).
+        if (state.accounts.length === 0) { await ensureDefaultAccounts(); }
+      }
       if (!c.error && c.data) { state.contracts = mergePending('contracts', c.data); cacheSet('contracts', state.contracts); }
       if (!t.error && t.data) { state.transactions = mergePending('transactions', t.data); cacheSet('transactions', state.transactions); }
-      if (state.accounts.length === 0) { await ensureDefaultAccounts(); }
     } catch (e) { console.warn('load error', e); }
   }
 }
@@ -254,15 +269,14 @@ function balanceOf(accId) {
   }
   return b;
 }
-function totalByType(type) { return state.accounts.filter((a) => a.type === type).reduce((s, a) => s + balanceOf(a.id), 0); }
 // Account ka balance track karna hai ya nahi (Bank ke liye user OFF kar sakta)
 function accTracked(a) { return !(((a && a.notes) || '').includes('[[notrack]]')); }
 function anyTracked(type) { return state.accounts.some((a) => a.type === type && accTracked(a)); }
 function balByType(type) { return state.accounts.filter((a) => a.type === type && accTracked(a)).reduce((s, a) => s + balanceOf(a.id), 0); }
 function spentViaAccount(id) { return state.transactions.filter((t) => t.type === 'Out' && t.account_id === id && t.payment_mode !== 'Udhaar').reduce((s, t) => s + (Number(t.amount) || 0), 0); }
-// Tracked type me agar koi untracked account bhi ho, uska kharcha card se gayab na ho
-function untrackedSpentByType(type) { return state.accounts.filter((a) => a.type === type && !accTracked(a)).reduce((s, a) => s + spentViaAccount(a.id), 0); }
 function spentByType(type) { const ids = state.accounts.filter((a) => a.type === type).map((a) => a.id); return state.transactions.filter((t) => t.type === 'Out' && ids.includes(t.account_id) && t.payment_mode !== 'Udhaar').reduce((s, t) => s + (Number(t.amount) || 0), 0); }
+// Ledger order: date (naya pehle), fir created_at. (loadAll ki server .order() bhi isi se match honi chahiye.)
+function sortTxns() { state.transactions.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created_at || '').localeCompare(a.created_at || '')); }
 
 function inRange(iso) {
   if (state.filterRange === 'all') return true;
@@ -427,8 +441,10 @@ function barSVG(bars) {
 /* ========================= SCREEN: DASHBOARD ====================== */
 function screenDashboard() {
   const cashTracked = anyTracked('Cash'), bankTracked = anyTracked('Bank');
-  const cashVal = cashTracked ? balByType('Cash') - untrackedSpentByType('Cash') : spentByType('Cash');
-  const bankVal = bankTracked ? balByType('Bank') - untrackedSpentByType('Bank') : spentByType('Bank');
+  // Card = tracked accounts ka balance. Untracked account ka kharcha alag se Reports/Settings me
+  // "Spent" dikhta hai — use balance me se ghatana galat tha (balance negative ho jaata tha).
+  const cashVal = cashTracked ? balByType('Cash') : spentByType('Cash');
+  const bankVal = bankTracked ? balByType('Bank') : spentByType('Bank');
   const kul = sumOut(); const isMah = sumOut((t) => thisMonth(t.date));
   const udhaar = sumOut((t) => t.payment_mode === 'Udhaar');
   const recent = state.transactions.slice(0, 6);
@@ -947,6 +963,7 @@ function openOutForm(existing) {
         if (!manual && !isNaN(q) && !isNaN(r)) rec.amount = q * r;
         rbSet(rec.item, rec.vendor, rec.rate);   // is item (+ shop) ka rate yaad rakho
       }
+      rec.amount = money(rec.amount);   // paise tak round (float drift store na ho)
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
       learnList('gk_items_' + cat, rec.item); learnList('gk_vendors', rec.vendor);
       bumpRecent('gk_ri_' + cat, rec.item); bumpRecent('gk_rv', rec.vendor);
@@ -959,11 +976,13 @@ function openOutForm(existing) {
 /* ====================== FORM: Paisa Aaya (In) ==================== */
 function openInForm(existing) {
   const t = existing || { id: uid(), type: 'In', date: today(), source: 'Bank Withdrawal', account_id: (state.accounts[0] || {}).id };
+  // List me na ho aisa source (import/legacy) bhi rahe — warna edit par chup-chaap badal jaata tha
+  const srcOpts = (t.source && !SOURCES.includes(t.source)) ? [t.source, ...SOURCES] : SOURCES;
   const inner = `
     <h3>${existing ? tr('✏️ Edit money in', '✏️ Aaya edit') : tr('➕ Money In', '➕ Paisa Aaya')}</h3>
     <div class="field"><label>${tr('Received in (account)', 'Kahan aaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
     <div class="field"><label>${tr('Amount ₹', 'Amount ₹')}</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
-    <div class="field"><label>${tr('Source (where from)', 'Kahan se aaya (source)')}</label>${chipsHtml('src', SOURCES, t.source)}</div>
+    <div class="field"><label>${tr('Source (where from)', 'Kahan se aaya (source)')}</label>${chipsHtml('src', srcOpts, t.source)}</div>
     <div class="field"><label>${tr('From whom (name, optional)', 'Kisse (naam, optional)')}</label><input id="f-from" list="dl-from" value="${esc(t.from_party || '')}" placeholder="${tr('person / bank', 'aadmi / bank')}" />
       <datalist id="dl-from">${learned('gk_from').map((v) => `<option>${esc(v)}</option>`).join('')}</datalist></div>
     <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
@@ -985,6 +1004,7 @@ function openInForm(existing) {
         payment_mode: acc && acc.type === 'Cash' ? 'Cash' : 'Net Banking',
         notes: root.querySelector('#f-notes').value.trim() || null
       };
+      rec.amount = money(rec.amount);
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
       learnList('gk_from', rec.from_party);
       await saveTx(rec, !existing); closeSheet();
@@ -1018,6 +1038,7 @@ function openTransferForm(existing) {
         account_id: from, to_account_id: to, payment_mode: 'Transfer',
         notes: root.querySelector('#f-notes').value.trim() || null
       };
+      rec.amount = money(rec.amount);
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
       await saveTx(rec, !existing); closeSheet();
     };
@@ -1129,28 +1150,37 @@ function openThekaForm(existing) {
     const calcSqft = (writeAmt = true) => {
       const ga = parseFloat(gArea.value) || 0, gr = parseFloat(gRate.value) || 0, fa = parseFloat(fArea.value) || 0, fr = parseFloat(fRate.value) || 0;
       if (!ga && !fa) { sqPrev.textContent = ''; return; }
-      const total = ga * gr + fa * fr; if (writeAmt) amtEl.value = total;
+      const total = ga * gr + fa * fr; if (writeAmt) amtEl.value = money(total);
       sqPrev.innerHTML = `${ga ? ga + '×₹' + gr : ''}${ga && fa ? ' + ' : ''}${fa ? fa + '×₹' + fr : ''} = <b>${inr(total)}</b>`;
     };
-    gArea.oninput = calcSqft; gRate.oninput = calcSqft; fArea.oninput = calcSqft; fRate.oninput = calcSqft;
+    // Jab tak user ne amount khud na chhua ho, sqft edit amount bharta rahe. Manually badal diya to
+    // sqft chhedne par bhi amount na badle (warna negotiate kiya hua theka_amount mit jaata tha).
+    let amtTouchedManually = false;
+    amtEl.oninput = () => { amtTouchedManually = true; };
+    const onSqft = () => calcSqft(!amtTouchedManually);
+    gArea.oninput = onSqft; gRate.oninput = onSqft; fArea.oninput = onSqft; fRate.oninput = onSqft;
     // pehle save ki hui sqft details wapas bhar do
     if (sp.sqft) {
       if (sp.sqft.ga != null) gArea.value = sp.sqft.ga;
       if (sp.sqft.gr != null) gRate.value = sp.sqft.gr;
       if (sp.sqft.fa != null) fArea.value = sp.sqft.fa;
       if (sp.sqft.fr != null) fRate.value = sp.sqft.fr;
+      // stored amount sqft-total se alag hai (hand-set) → use protected maano
+      const ga = parseFloat(gArea.value) || 0, gr = parseFloat(gRate.value) || 0, fa = parseFloat(fArea.value) || 0, fr = parseFloat(fRate.value) || 0;
+      if (Number(c.theka_amount) && money(c.theka_amount) !== money(ga * gr + fa * fr)) amtTouchedManually = true;
       calcSqft(false);   // sirf preview — stored theka_amount ko mat chhedo
     }
 
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = async () => {
+      if (!confirm(tr('Delete this theka? This cannot be undone.', 'Ye theka delete karein? Wapas nahi aayega.'))) return;
       state.contracts = state.contracts.filter((x) => x.id !== c.id); cacheSet('contracts', state.contracts);
       await deleteRow('contracts', c.id); closeSheet(); refresh(); toast(tr('Theka deleted', 'Theka delete'));
     };
     root.querySelector('#save').onclick = async () => {
       const rec = {
         id: c.id, user_id: userId(), thekedar_name: root.querySelector('#t-name').value.trim() || null,
-        kaam: root.querySelector('#t-kaam').value.trim() || null, theka_amount: parseFloat(root.querySelector('#t-amt').value) || 0,
+        kaam: root.querySelector('#t-kaam').value.trim() || null, theka_amount: money(parseFloat(root.querySelector('#t-amt').value) || 0),
         start_date: root.querySelector('#t-date').value || null,
         notes: buildNote(root.querySelector('#t-notes').value, { ga: parseFloat(gArea.value) || 0, gr: parseFloat(gRate.value) || 0, fa: parseFloat(fArea.value) || 0, fr: parseFloat(fRate.value) || 0 })
       };
@@ -1198,9 +1228,8 @@ async function saveTx(rec, isNew) {
   rec.user_id = userId();
   const i = state.transactions.findIndex((x) => x.id === rec.id);
   if (i >= 0) state.transactions[i] = Object.assign({}, state.transactions[i], rec);
-  else state.transactions.unshift(rec);
-  // keep sorted by date desc
-  state.transactions.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created_at || '').localeCompare(a.created_at || ''));
+  else { if (!rec.created_at) rec.created_at = new Date().toISOString(); state.transactions.unshift(rec); }  // local timestamp → naya entry "Recent" me upar rahe
+  sortTxns();   // date desc, fir created_at desc
   cacheSet('transactions', state.transactions);
   refresh();
   await pushRow('transactions', rec);
@@ -1241,17 +1270,29 @@ function exportJSON() {
 }
 
 /* ============================== Import ========================== */
-// account ko type ('Cash'/'Bank') se resolve karo (na ho to bana do)
-async function resolveAccount(type) {
-  if (!type) return null;
-  let a = state.accounts.find((x) => x.type === type);
-  if (!a) { a = { id: uid(), user_id: userId(), name: type === 'Bank' ? 'Bank' : 'Cash (haath)', type: type, opening_balance: 0 }; state.accounts.push(a); cacheSet('accounts', state.accounts); await pushRow('accounts', a); }
+// account ko type ('Cash'/'Bank') YA naam se resolve karo (na ho to bana do).
+// Naya account hamesha 'Cash'/'Bank' type ka hi bane (warna dashboard cards me dikhta hi nahi tha).
+async function resolveAccount(raw) {
+  if (!raw) return null;
+  const s = String(raw).trim();
+  let a = state.accounts.find((x) => x.type === s || (x.name || '').toLowerCase() === s.toLowerCase());
+  if (!a) {
+    const type = /bank/i.test(s) ? 'Bank' : 'Cash';
+    a = { id: uid(), user_id: userId(), name: type === 'Bank' ? 'Bank' : 'Cash (haath)', type: type, opening_balance: 0 };
+    state.accounts.push(a); cacheSet('accounts', state.accounts); await pushRow('accounts', a);
+  }
   return a.id;
 }
 async function resolveTheka(name, startDate, kaam, amount, note) {
   if (!name) return null;
   let c = state.contracts.find((x) => (x.thekedar_name || '').toLowerCase() === name.toLowerCase());
-  if (!c) { c = { id: uid(), user_id: userId(), thekedar_name: name, kaam: kaam || 'Mistry / Theka', theka_amount: Number(amount) || 0, start_date: startDate || today(), notes: note || null }; state.contracts.push(c); cacheSet('contracts', state.contracts); await pushRow('contracts', c); }
+  if (!c) {
+    c = { id: uid(), user_id: userId(), thekedar_name: name, kaam: kaam || 'Mistry / Theka', theka_amount: money(amount), start_date: startDate || today(), notes: note || null };
+    state.contracts.push(c); cacheSet('contracts', state.contracts); await pushRow('contracts', c);
+  } else if (Number(amount) > 0 && money(amount) > (Number(c.theka_amount) || 0)) {
+    // baad ki row me asli/poora theka_amount aaya → adopt karo (pehli row me 0/chhota tha to thik ho jaye)
+    c.theka_amount = money(amount); cacheSet('contracts', state.contracts); await pushRow('contracts', c);
+  }
   return c.id;
 }
 function openImportForm() {
@@ -1268,16 +1309,19 @@ function openImportForm() {
       try { arr = JSON.parse(root.querySelector('#imp-json').value); } catch (e) { return toast(tr('Invalid JSON', 'JSON galat hai'), true); }
       if (!Array.isArray(arr) || !arr.length) return toast(tr('No entries found', 'Koi entry nahi mili'), true);
       const btn = root.querySelector('#imp-go'); btn.disabled = true; btn.textContent = tr('Importing…', 'Import ho raha…');
-      let n = 0;
+      let n = 0, skipped = 0;
       for (const it of arr) {
-        const amt = Number(it.amount) || 0; if (!(amt > 0)) continue;
+        const amt = money(Number(it.amount) || 0); if (!(amt > 0)) continue;
+        const isTransfer = it.type === 'Transfer';
         const accId = it.mode === 'Udhaar' ? null : await resolveAccount(it.acc);
+        const toAccId = isTransfer ? await resolveAccount(it.to_acc) : null;
+        if (isTransfer && !toAccId) { skipped++; continue; }   // bina destination Transfer paisa kho deta — chhod do
         const cid = await resolveTheka(it.theka, it.date, it.theka_kaam, it.theka_amount, it.theka_note);
         const rec = {
           id: uid(), user_id: userId(), type: it.type || 'Out', date: it.date || today(), amount: amt,
           category: it.category || null, item: it.item || null,
           qty: it.qty != null ? Number(it.qty) : null, unit: it.unit || null, rate: it.rate != null ? Number(it.rate) : null,
-          vendor: it.vendor || null, payment_mode: it.mode || null, account_id: accId, contract_id: cid,
+          vendor: it.vendor || null, payment_mode: isTransfer ? 'Transfer' : (it.mode || null), account_id: accId, to_account_id: toAccId, contract_id: cid,
           source: it.source || null, from_party: it.from || null, notes: it.note || null
         };
         state.transactions.push(rec); await pushRow('transactions', rec);
@@ -1285,9 +1329,10 @@ function openImportForm() {
         if (it.category && !CATEGORIES.includes(it.category)) learnList('gk_categories', it.category);
         n++;
       }
-      state.transactions.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created_at || '').localeCompare(a.created_at || ''));
+      sortTxns();
       cacheSet('transactions', state.transactions);
-      closeSheet(); refresh(); toast(tr(n + ' entries imported ✅', n + ' entries import ho gayi ✅'));
+      closeSheet(); refresh();
+      toast(tr(n + ' entries imported ✅' + (skipped ? ' (' + skipped + ' skipped)' : ''), n + ' entries import ho gayi ✅' + (skipped ? ' (' + skipped + ' chhod di)' : '')));
     };
   });
 }
@@ -1297,15 +1342,22 @@ async function clearAllData() {
   // Offline me clear mat karo — server pe data reh jaata aur agle sync par wapas aa jaata tha
   if (!sb || !state.online) return toast(tr('Connect to internet to clear data', 'Data clear karne ke liye internet zaroori'), true);
   if (!confirm(tr('Delete ALL entries and thekas? This cannot be undone.', 'Saari entries aur thekas delete kar du? Wapas nahi aayenge.'))) return;
+  // Pehle server se delete karo aur CONFIRM karo ki sach me hua (Supabase error throw nahi karta,
+  // {error} value me deta hai). Tabhi local saaf karo — warna "cleared" dikha kar sync par wapas aa jaata tha.
+  let r1, r2;
+  try {
+    r1 = await sb.from('transactions').delete().eq('user_id', userId());
+    r2 = await sb.from('contracts').delete().eq('user_id', userId());
+  } catch (e) { r1 = { error: e }; }
+  if ((r1 && r1.error) || (r2 && r2.error)) {
+    console.warn('clear', (r1 && r1.error) || (r2 && r2.error));
+    return toast(tr('Could not clear on server — try again', 'Server se clear nahi hua — phir try karein'), true);
+  }
   state.transactions = []; state.contracts = [];
   cacheSet('transactions', []); cacheSet('contracts', []);
   // Sirf in dono table ke pending ops hatao — accounts ke bin-sync writes reh jaayein
   queueSet(queueGet().filter((op) => op.table !== 'transactions' && op.table !== 'contracts'));
   refresh();
-  try {
-    await sb.from('transactions').delete().eq('user_id', userId());
-    await sb.from('contracts').delete().eq('user_id', userId());
-  } catch (e) { console.warn('clear', e); }
   toast(tr('All data cleared', 'Sab data clear ho gaya'));
 }
 
@@ -1348,7 +1400,7 @@ function renderAuth() {
       <p class="muted mt16">🔒 ${tr('Your data is secure — visible only to you.', 'Aapka data surakshit — sirf aapko dikhega.')}</p>
     </div>`;
 
-  $('#auth-lang').querySelectorAll('button').forEach((b) => b.onclick = () => { if (b.dataset.l !== lang) { setLang(b.dataset.l); renderAuth(); } });
+  $('#auth-lang').querySelectorAll('button').forEach((b) => b.onclick = () => { if (b.dataset.l !== lang) { const em = $('#au-email'); if (em) state.authEmail = em.value; setLang(b.dataset.l); renderAuth(); } });
 
   if (state.authStep === 'config') {
     $('#cfg-save').onclick = () => {
