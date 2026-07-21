@@ -29,6 +29,14 @@ const CATEGORIES = ['Material', 'Labour', 'Theka Payment', 'Architect', 'Misc'];
 const PAY_MODES = ['Cash', 'UPI', 'Net Banking', 'Online', 'Udhaar'];
 const SOURCES = ['Bank Withdrawal', 'Salary', 'Loan', 'Borrowed', 'Savings', 'Sale', 'Other'];
 const UNITS = ['Sakda', 'Trolley', 'Tractor', 'Truck', 'Bori', 'Kg', 'Quintal', 'Ton', 'Nag', 'Number', 'Hazaar', 'Ft', 'Sq Ft', 'Din', 'Litre', 'Tanker', 'Bundle'];
+// Per-1000 pricing: in units me rate 1000 units ka hota hai (eint → Hazaar). Amount = qty × rate ÷ 1000.
+const PER_1000_UNITS = ['Hazaar'];
+// qty × rate — magar Hazaar jaise per-1000 unit pe rate 1000 ka hai, isliye 1000 se divide.
+function lineAmount(q, r, unit) {
+  q = Number(q); r = Number(r);
+  if (isNaN(q) || isNaN(r)) return NaN;
+  return PER_1000_UNITS.includes(unit) ? q * r / 1000 : q * r;
+}
 // Item ke hisaab se sahi default unit (reta/bajri/mitti → Sakda; eint → Hazaar/per-1000; sariya/taar → Kg; kade → Nag)
 const ITEM_UNIT = {
   'Reta': 'Sakda', 'Bajri': 'Sakda', 'Mitti': 'Sakda', 'Gitti': 'Sakda', 'Pathar': 'Sakda', 'Coarse Sand': 'Sakda', 'Badarpur': 'Sakda',
@@ -884,18 +892,22 @@ function openOutForm(existing) {
     // "manual" tabhi jab stored amount sach me qty×rate se alag ho (ya qty/rate hai hi nahi).
     // Sirf "edit hai" isliye manual nahi — warna qty/rate badalne par amount purana reh jata tha.
     let manual = !!(existing && existing.amount != null && (existing.qty == null || existing.rate == null ||
-      Number(existing.amount).toFixed(2) !== (Number(existing.qty) * Number(existing.rate)).toFixed(2)));
+      Number(existing.amount).toFixed(2) !== lineAmount(existing.qty, existing.rate, existing.unit).toFixed(2)));
     const calc = () => {
       const q = parseFloat(qty.value), r = parseFloat(rate.value);
-      if (!isNaN(q) && !isNaN(r)) { prev.innerHTML = `${q} × ${inr(r)} = <b>${inr(q * r)}</b>`; if (!manual) amount.value = (q * r).toFixed(2).replace(/\.00$/, ''); }
-      else prev.textContent = '';
+      if (!isNaN(q) && !isNaN(r)) {
+        const per1000 = PER_1000_UNITS.includes(unitEl.value);
+        const amt = lineAmount(q, r, unitEl.value);
+        prev.innerHTML = `${q} × ${inr(r)}${per1000 ? ' ÷ 1000' : ''} = <b>${inr(amt)}</b>`;
+        if (!manual) amount.value = amt.toFixed(2).replace(/\.00$/, '');
+      } else prev.textContent = '';
     };
     // Amount khaali kar diya → wapas qty×rate se auto-calc; warna jo type kiya wahi manual amount
     qty.oninput = calc; rate.oninput = calc; amount.oninput = () => { manual = amount.value.trim() !== ''; calc(); }; calc();
 
     // Item ke hisaab se unit auto-set (reta/bajri/mitti → Sakda), jab tak user khud unit na badle
     let unitTouched = !!(existing && existing.unit);
-    unitEl.onchange = () => { unitTouched = true; };
+    unitEl.onchange = () => { unitTouched = true; calc(); };
     const applyItemUnit = () => {
       if (unitTouched) return;
       const k = Object.keys(ITEM_UNIT).find((x) => x.toLowerCase() === itemEl.value.trim().toLowerCase());
@@ -960,7 +972,7 @@ function openOutForm(existing) {
         const q = parseFloat(qty.value), r = parseFloat(rate.value);
         rec.qty = isNaN(q) ? null : q; rec.unit = unitEl.value; rec.rate = isNaN(r) ? null : r;
         // amount hamesha qty×rate ke barabar rahe (jab tak user ne khud amount na badla ho)
-        if (!manual && !isNaN(q) && !isNaN(r)) rec.amount = q * r;
+        if (!manual && !isNaN(q) && !isNaN(r)) rec.amount = lineAmount(q, r, rec.unit);
         rbSet(rec.item, rec.vendor, rec.rate);   // is item (+ shop) ka rate yaad rakho
       }
       rec.amount = money(rec.amount);   // paise tak round (float drift store na ho)
