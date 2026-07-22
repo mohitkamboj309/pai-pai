@@ -1358,12 +1358,16 @@ function openActivityLog() {
   const inner = `
     <h3>🔍 ${tr('Activity log', 'Activity log')}</h3>
     <p class="muted" style="margin:0 2px 8px">${tr('Recent entries, syncs & errors (last 200). Nothing here changes your data.', 'Recent entries, sync aur errors (last 200). Yahan se data nahi badalta.')}${errN ? ' · ' + errN + ' ' + tr('error(s)', 'error') : ''}</p>
-    <div class="report-card" style="max-height:58vh;overflow:auto">${rows}</div>
-    <button class="btn-ghost" id="clear-log" style="width:100%;margin-top:10px">${tr('Clear log', 'Log clear karo')}</button>
-    <button class="btn-primary" id="close" style="width:100%;margin-top:8px">${tr('Close', 'Band karo')}</button>`;
+    <div class="report-card" style="max-height:60vh;overflow:auto">${rows}</div>
+    <button class="btn-primary" id="close" style="width:100%;margin-top:10px">${tr('Close', 'Band karo')}</button>
+    <div class="center" style="margin-top:14px"><span id="clear-log" style="font-size:12px;color:#9aa196;text-decoration:underline;cursor:pointer">${tr('Clear log', 'Log clear karo')}</span></div>`;
   openSheet(inner, (root) => {
     root.querySelector('#close').onclick = () => { closeSheet(); renderHeader(); };
-    root.querySelector('#clear-log').onclick = () => { try { localStorage.removeItem('gk_activity'); } catch (_) { } closeSheet(); renderHeader(); toast(tr('Log cleared', 'Log clear ho gaya')); };
+    // Chhota subtle link + confirm — taaki galti se poora log delete na ho
+    root.querySelector('#clear-log').onclick = () => {
+      if (!confirm(tr('Clear the whole activity log? This cannot be undone.', 'Poora activity log clear karein? Wapas nahi aayega.'))) return;
+      try { localStorage.removeItem('gk_activity'); } catch (_) { } closeSheet(); renderHeader(); toast(tr('Log cleared', 'Log clear ho gaya'));
+    };
   });
   renderHeader();
 }
