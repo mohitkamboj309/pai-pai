@@ -83,6 +83,7 @@ h1, h2, h3, h4 { letter-spacing: -0.02em; }
 .dot { width: 7px; height: 7px; border-radius: 50%; background: #5fe08f; box-shadow: 0 0 0 3px rgba(95,224,143,.25); }
 .sync-badge.offline .dot { background: #fff; box-shadow: none; }
 .sync-badge.pending .dot { background: #3d2c00; box-shadow: none; }
+.sync-badge.err { background: var(--red-soft); color: var(--red); margin-right: 6px; }
 
 /* ---------- Screen container ---------- */
 .screen {

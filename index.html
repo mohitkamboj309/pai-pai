@@ -18,8 +18,9 @@
 
   <link rel="stylesheet" href="style.css" />
 
-  <!-- Supabase client (CDN, no build step) -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <!-- Supabase client (CDN, no build step). defer = render-blocking nahi; loader turant dikhta hai.
+       app.js bhi defer hai → dono parse ke baad document-order me chalte hain (supabase pehle). -->
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 </head>
 <body>
   <div id="app">
@@ -28,6 +29,6 @@
   <div id="modal-root"></div>
   <div id="toast" class="toast"></div>
 
-  <script src="app.js"></script>
+  <script defer src="app.js"></script>
 </body>
 </html>

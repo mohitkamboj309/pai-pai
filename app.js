@@ -97,6 +97,20 @@ function num(v) {
   const n = parseFloat(s);
   return isNaN(n) ? NaN : n;
 }
+
+/* ---- Activity log — kya-kya hua + errors. Apni alag localStorage key; transactions/data ko haath nahi lagta ---- */
+function logEvent(kind, msg, level) {
+  try {
+    const log = JSON.parse(localStorage.getItem('gk_activity') || '[]');
+    log.unshift({ ts: new Date().toISOString(), kind: kind || 'info', msg: String(msg || ''), level: level === 'error' ? 'error' : 'info' });
+    localStorage.setItem('gk_activity', JSON.stringify(log.slice(0, 200)));
+  } catch (_) { }
+}
+function activityLog() { try { return JSON.parse(localStorage.getItem('gk_activity') || '[]'); } catch (_) { return []; } }
+function markActSeen() { try { localStorage.setItem('gk_act_seen', new Date().toISOString()); } catch (_) { } }
+function newErrorCount() { const s = localStorage.getItem('gk_act_seen') || ''; return activityLog().filter((e) => e.level === 'error' && e.ts > s).length; }
+function msgOf(e) { return (e && (e.message || e.error_description || e.details)) || String(e || 'unknown'); }
+function fmtLogTime(iso) { try { return new Date(iso).toLocaleString(); } catch (_) { return iso; } }
 // Local date (UTC nahi) — taaki aadhi raat ke aas-paas IST me bhi sahi mahine me gine
 function today() { const d = new Date(); const p = (x) => String(x).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
 function fmtDate(iso) {
@@ -216,7 +230,7 @@ async function flushQueue() {
           if (error) throw error;
         }
         if (op._qid) doneIds.add(op._qid);
-      } catch (e) { console.warn('sync fail', e); }
+      } catch (e) { console.warn('sync fail', e); logEvent('sync', tr('Sync failed for one item — will retry', 'Ek item sync fail — retry hoga') + ': ' + msgOf(e), 'error'); }
     }
     // queue dobara padho (flush ke beech jo nayi entry aayi wo bhi safe rahe) — sirf done ops hatao
     queueSet(queueGet().filter((op) => !(op._qid && doneIds.has(op._qid))));
@@ -227,44 +241,54 @@ async function pushRow(table, row) {
   // optimistic local already done by caller; here we try server or queue
   if (sb && state.online) {
     try { const { error } = await sb.from(table).upsert(row); if (error) throw error; return; }
-    catch (e) { console.warn(e); }
+    catch (e) {
+      console.warn(e);
+      logEvent('sync', tr('Cloud save failed — kept for retry', 'Cloud pe save fail — retry me rakha') + ' (' + table + '): ' + msgOf(e), 'error');
+      renderHeader(); toast(tr('Save failed — kept for retry (see Activity log)', 'Save fail — retry me rakha (Activity log dekho)'), true);
+    }
   }
   enqueue({ type: 'upsert', table, row });
 }
 async function deleteRow(table, id) {
   if (sb && state.online) {
     try { const { error } = await sb.from(table).delete().eq('id', id); if (error) throw error; return; }
-    catch (e) { console.warn(e); }
+    catch (e) {
+      console.warn(e);
+      logEvent('sync', tr('Cloud delete failed — kept for retry', 'Cloud delete fail — retry me rakha') + ' (' + table + '): ' + msgOf(e), 'error');
+      renderHeader();
+    }
   }
   enqueue({ type: 'delete', table, id });
 }
 
 /* --------------------------- Data load ---------------------------- */
-async function loadAll() {
-  // cache first (instant + offline)
+// Cache se state turant bharo (sync, offline-first) — network ka wait nahi
+function loadCache() {
   state.accounts = cacheGet('accounts');
   state.contracts = cacheGet('contracts');
   state.transactions = cacheGet('transactions');
-
-  if (sb && state.online) {
-    try {
-      await flushQueue();
-      const [a, c, t] = await Promise.all([
-        sb.from('accounts').select('*').order('created_at', { ascending: true }),
-        sb.from('contracts').select('*').order('created_at', { ascending: true }),
-        sb.from('transactions').select('*').order('date', { ascending: false }).order('created_at', { ascending: false })
-      ]);
-      if (!a.error && a.data) {
-        state.accounts = mergePending('accounts', a.data); cacheSet('accounts', state.accounts);
-        // Default accounts SIRF tab banao jab fetch sach me chala aur 0 rows aaye — fetch error par
-        // nahi (warna purane user ko duplicate phantom accounts mil jaate the).
-        if (state.accounts.length === 0) { await ensureDefaultAccounts(); }
-      }
-      if (!c.error && c.data) { state.contracts = mergePending('contracts', c.data); cacheSet('contracts', state.contracts); }
-      if (!t.error && t.data) { state.transactions = mergePending('transactions', t.data); cacheSet('transactions', state.transactions); }
-    } catch (e) { console.warn('load error', e); }
-  }
 }
+// Cloud se latest le kar cache update karo (network) — background me chalta hai
+async function loadFromCloud() {
+  if (!(sb && state.online)) return;
+  try {
+    await flushQueue();
+    const [a, c, t] = await Promise.all([
+      sb.from('accounts').select('*').order('created_at', { ascending: true }),
+      sb.from('contracts').select('*').order('created_at', { ascending: true }),
+      sb.from('transactions').select('*').order('date', { ascending: false }).order('created_at', { ascending: false })
+    ]);
+    if (!a.error && a.data) {
+      state.accounts = mergePending('accounts', a.data); cacheSet('accounts', state.accounts);
+      // Default accounts SIRF tab banao jab fetch sach me chala aur 0 rows aaye — fetch error par
+      // nahi (warna purane user ko duplicate phantom accounts mil jaate the).
+      if (state.accounts.length === 0) { await ensureDefaultAccounts(); }
+    }
+    if (!c.error && c.data) { state.contracts = mergePending('contracts', c.data); cacheSet('contracts', state.contracts); }
+    if (!t.error && t.data) { state.transactions = mergePending('transactions', t.data); cacheSet('transactions', state.transactions); }
+  } catch (e) { console.warn('load error', e); logEvent('sync', tr('Load from cloud failed', 'Cloud se load fail') + ': ' + msgOf(e), 'error'); }
+}
+async function loadAll() { loadCache(); await loadFromCloud(); }
 
 async function ensureDefaultAccounts() {
   const uidv = state.session && state.session.user ? state.session.user.id : null;
@@ -368,10 +392,17 @@ function renderHeader() {
   const sub = $('#hdr-sub'); if (sub) sub.textContent = tr('Construction ledger', 'Hisaab kitaab');
   const badge = $('#sync-badge'); if (!badge) return;
   const pc = pendingCount();
-  if (!state.online) badge.innerHTML = `<span class="sync-badge offline"><span class="dot"></span>${tr('Offline', 'Offline')}${pc ? ' · ' + pc : ''}</span>`;
-  else if (pc) badge.innerHTML = `<span class="sync-badge pending"><span class="dot"></span>${tr('Sync', 'Sync')} ${pc}</span>`;
-  else badge.innerHTML = `<span class="sync-badge"><span class="dot"></span>${tr('Synced', 'Synced')}</span>`;
-  badge.onclick = async () => { if (state.online) { toast(tr('Syncing…', 'Sync ho raha hai…')); await flushQueue(); await loadAll(); refresh(); toast(tr('Synced', 'Sync ho gaya')); } };
+  let sync;
+  if (!state.online) sync = `<span class="sync-badge offline"><span class="dot"></span>${tr('Offline', 'Offline')}${pc ? ' · ' + pc : ''}</span>`;
+  else if (pc) sync = `<span class="sync-badge pending"><span class="dot"></span>${tr('Sync', 'Sync')} ${pc}</span>`;
+  else sync = `<span class="sync-badge"><span class="dot"></span>${tr('Synced', 'Synced')}</span>`;
+  const errN = newErrorCount();
+  const err = errN ? `<span class="sync-badge err" id="err-badge">⚠️ ${errN}</span>` : '';
+  badge.innerHTML = err + sync;
+  const syncEl = badge.querySelector('.sync-badge:not(.err)');
+  if (syncEl) syncEl.onclick = async () => { if (state.online) { toast(tr('Syncing…', 'Sync ho raha hai…')); await flushQueue(); await loadAll(); refresh(); toast(tr('Synced', 'Sync ho gaya')); } };
+  const eb = badge.querySelector('#err-badge');
+  if (eb) eb.onclick = openActivityLog;
 }
 
 function show(view) { state.view = view; renderScreen(); }
@@ -731,6 +762,7 @@ function screenSettings() {
         <button class="btn-secondary" id="exp-csv">⬇️ CSV</button>
       </div>
       <button class="btn-secondary" id="sync-now" style="width:100%;margin-top:8px">🔄 ${tr('Sync now', 'Abhi Sync karo')}</button>
+      <button class="btn-secondary" id="activity-log" style="width:100%;margin-top:8px">🔍 ${tr('Activity log / Errors', 'Activity log / Errors')}</button>
 
       <details class="adv">
         <summary>⚙️ ${tr('Advanced', 'Advanced')}</summary>
@@ -758,6 +790,7 @@ function screenSettings() {
     $('#exp-json').onclick = exportJSON;
     $('#exp-csv').onclick = exportCSV;
     $('#sync-now').onclick = async () => { toast(tr('Syncing…', 'Sync…')); await flushQueue(); await loadAll(); refresh(); toast(tr('Done', 'Ho gaya')); };
+    $('#activity-log').onclick = openActivityLog;
     $('#import-btn').onclick = openImportForm;
     $('#clear-all').onclick = clearAllData;
     const sc = $('#save-cfg');
@@ -1301,6 +1334,7 @@ async function saveTx(rec, isNew) {
   cacheSet('transactions', state.transactions);
   refresh();
   await pushRow('transactions', rec);
+  logEvent('entry', (isNew ? tr('Saved', 'Save') : tr('Updated', 'Update')) + ': ' + (rec.item || rec.category || tr('entry', 'entry')) + ' ' + inr(rec.amount) + (rec.payment_mode ? ' · ' + rec.payment_mode : ''), 'info');
   renderHeader();
   toast(isNew ? tr('Entry saved ✅', 'Entry save ho gayi ✅') : tr('Updated ✅', 'Update ho gaya ✅'));
 }
@@ -1309,7 +1343,29 @@ function confirmDelete(t) {
   state.transactions = state.transactions.filter((x) => x.id !== t.id);
   cacheSet('transactions', state.transactions);
   deleteRow('transactions', t.id);
+  logEvent('entry', tr('Deleted', 'Delete') + ': ' + (t.item || t.category || tr('entry', 'entry')) + ' ' + inr(t.amount), 'info');
   closeSheet(); refresh(); toast(tr('Deleted', 'Delete ho gaya'));
+}
+// Activity log / errors dekho — checking ke liye. Yahan se sirf padha jata hai, data nahi badalta.
+function openActivityLog() {
+  markActSeen();
+  const log = activityLog();
+  const rows = log.length ? log.map((e) => {
+    const isErr = e.level === 'error';
+    return `<div class="rrow"><div class="k">${isErr ? '⚠️ ' : '• '}<b${isErr ? ' style="color:var(--red)"' : ''}>${esc(e.msg)}</b><small style="display:block;color:#8a8f88;font-weight:400;margin-top:2px">${esc(fmtLogTime(e.ts))} · ${esc(e.kind)}</small></div></div>`;
+  }).join('') : `<div class="muted center" style="padding:24px">${tr('No activity yet', 'Abhi tak kuch nahi')}</div>`;
+  const errN = log.filter((e) => e.level === 'error').length;
+  const inner = `
+    <h3>🔍 ${tr('Activity log', 'Activity log')}</h3>
+    <p class="muted" style="margin:0 2px 8px">${tr('Recent entries, syncs & errors (last 200). Nothing here changes your data.', 'Recent entries, sync aur errors (last 200). Yahan se data nahi badalta.')}${errN ? ' · ' + errN + ' ' + tr('error(s)', 'error') : ''}</p>
+    <div class="report-card" style="max-height:58vh;overflow:auto">${rows}</div>
+    <button class="btn-ghost" id="clear-log" style="width:100%;margin-top:10px">${tr('Clear log', 'Log clear karo')}</button>
+    <button class="btn-primary" id="close" style="width:100%;margin-top:8px">${tr('Close', 'Band karo')}</button>`;
+  openSheet(inner, (root) => {
+    root.querySelector('#close').onclick = () => { closeSheet(); renderHeader(); };
+    root.querySelector('#clear-log').onclick = () => { try { localStorage.removeItem('gk_activity'); } catch (_) { } closeSheet(); renderHeader(); toast(tr('Log cleared', 'Log clear ho gaya')); };
+  });
+  renderHeader();
 }
 
 /* ============================ Export ============================ */
@@ -1507,10 +1563,15 @@ function renderAuth() {
 /* ============================ Bootstrap ========================= */
 async function enterApp() {
   buildShell();
-  app().querySelector('#screen').innerHTML = `<div class="full-loader"><div class="spinner"></div>${tr('Loading data…', 'Data load ho raha hai…')}</div>`;
   renderHeader();
-  await loadAll();
-  show('dashboard');
+  // Cache me jo hai wo TURANT dikhao (network ka wait nahi) — offline-first ka asli fayda
+  loadCache();
+  if (state.transactions.length || state.accounts.length) show('dashboard');
+  else app().querySelector('#screen').innerHTML = `<div class="full-loader"><div class="spinner"></div>${tr('Loading data…', 'Data load ho raha hai…')}</div>`;
+  renderHeader();
+  // Phir background me cloud se latest le kar update kar do
+  if (sb && state.online) { await loadFromCloud(); refresh(); }
+  else show('dashboard');
   renderHeader();
 }
 
@@ -1542,6 +1603,9 @@ function setupKeyboardNav() {
 }
 
 async function start() {
+  // Koi bhi unhandled error/rejection → activity log me daalo (chup-chaap gum na ho)
+  window.addEventListener('error', (e) => { try { logEvent('app', 'Error: ' + (e.message || msgOf(e.error)), 'error'); renderHeader(); } catch (_) { } });
+  window.addEventListener('unhandledrejection', (e) => { try { logEvent('app', 'Error: ' + msgOf(e.reason), 'error'); renderHeader(); } catch (_) { } });
   registerSW();
   bindConnectivity();
   setupKeyboardNav();
