@@ -89,6 +89,14 @@ function inr(n) {
   const s = n.toLocaleString('en-IN', { maximumFractionDigits: 2 });
   return (neg ? '−' : '') + '₹' + s;
 }
+// "38,000" / " 8600 " / "₹5000" jaise input ko number me — comma/space/₹ hata ke (type=text fields)
+function num(v) {
+  if (v == null) return NaN;
+  const s = String(v).replace(/[^0-9.\-]/g, '');
+  if (s === '' || s === '-' || s === '.') return NaN;
+  const n = parseFloat(s);
+  return isNaN(n) ? NaN : n;
+}
 // Local date (UTC nahi) — taaki aadhi raat ke aas-paas IST me bhi sahi mahine me gine
 function today() { const d = new Date(); const p = (x) => String(x).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
 function fmtDate(iso) {
@@ -157,6 +165,12 @@ function rbGet(item, vendor) {
   if (v != null) return v;
   const w = book[rbKey(item, '')];              // warna sirf item ka aakhri rate
   return w != null ? w : null;
+}
+// Sirf exact item+vendor ka rate (koi item-only guess nahi) — auto-fill isi se hota hai
+function rbGetExact(item, vendor) {
+  if (!item || !String(item).trim() || !vendor || !String(vendor).trim()) return null;
+  const v = rbAll()[rbKey(item, vendor)];
+  return v != null ? v : null;
 }
 function rbSet(item, vendor, rate) {
   if (!item || rate == null || isNaN(rate) || rate <= 0) return;
@@ -797,7 +811,7 @@ function openOutForm(existing) {
   // isEdit = sach me purani saved entry (Repeat me clone ka naya id hota hai → new entry)
   const isEdit = !!(existing && state.transactions.some((x) => x.id === existing.id));
   const md = catDefault('Material') || {};
-  const t = existing || { id: uid(), type: 'Out', date: today(), category: 'Material', payment_mode: md.mode || 'Cash', account_id: (md.acc && state.accounts.some((a) => a.id === md.acc)) ? md.acc : (state.accounts[0] || {}).id };
+  const t = existing || { id: uid(), type: 'Out', date: today(), category: 'Material', payment_mode: (md.mode && md.mode !== 'Udhaar') ? md.mode : 'Cash', account_id: (md.acc && state.accounts.some((a) => a.id === md.acc)) ? md.acc : (state.accounts[0] || {}).id };
   const itemsDL = 'dl-items';
   // Purani entry ka unit agar list me na ho to bhi use option me rakho (warna save par chup-chaap badal jata)
   const unitOpts = (t.unit && !UNITS.includes(t.unit)) ? [t.unit, ...UNITS] : UNITS;
@@ -818,9 +832,9 @@ function openOutForm(existing) {
         <div class="chips recent" id="rc-items"></div>
       </div>
       <div class="row3">
-        <div class="field"><label>${tr('Qty', 'Qty')}</label><input id="f-qty" type="number" inputmode="decimal" step="any" value="${t.qty ?? ''}" placeholder="0" /></div>
+        <div class="field"><label>${tr('Qty', 'Qty')}</label><input id="f-qty" type="text" inputmode="decimal" value="${t.qty ?? ''}" placeholder="0" /></div>
         <div class="field"><label>${tr('Unit', 'Unit')}</label><select id="f-unit">${unitOpts.map((u) => `<option ${u === t.unit ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
-        <div class="field"><label>${tr('Rate ₹', 'Rate ₹')}</label><input id="f-rate" type="number" inputmode="decimal" step="any" value="${t.rate ?? ''}" placeholder="0" /></div>
+        <div class="field"><label id="rate-label">${tr('Rate ₹', 'Rate ₹')}</label><input id="f-rate" type="text" inputmode="decimal" value="${t.rate ?? ''}" placeholder="0" /></div>
       </div>
     </div>
 
@@ -828,7 +842,7 @@ function openOutForm(existing) {
       <select id="f-contract"><option value="">${tr('— Choose theka —', '— Theka chuno —')}</option>${state.contracts.map((c) => `<option value="${c.id}" ${c.id === t.contract_id ? 'selected' : ''}>${esc(c.thekedar_name || c.kaam || tr('Theka', 'Theka'))}</option>`).join('')}</select>
     </div>
 
-    <div class="field"><label>${tr('Amount ₹ (total)', 'Amount ₹ (kul)')}</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /><div class="amt-preview" id="amt-prev"></div></div>
+    <div class="field"><label>${tr('Amount ₹ (total)', 'Amount ₹ (kul)')}</label><input id="f-amount" type="text" inputmode="decimal" value="${t.amount ?? ''}" placeholder="0" /><div class="amt-preview" id="amt-prev"></div></div>
 
     <div class="field"><label>${tr('From / to whom (vendor)', 'Kisse aaya / kise diya (vendor)')}</label><input id="f-vendor" list="dl-vendor" value="${esc(t.vendor || '')}" placeholder="${tr('shop / person name', 'dukaan / aadmi ka naam')}" />
       <datalist id="dl-vendor">${learned('gk_vendors').map((v) => `<option>${esc(v)}</option>`).join('')}</datalist>
@@ -875,16 +889,19 @@ function openOutForm(existing) {
 
     // Udhaar par "Paid from (account)" chhupao — abhi kisi account se paisa nahi gaya
     const toggleAccount = (mode) => { root.querySelector('#account-field').classList.toggle('hidden', mode === 'Udhaar'); };
-    // Smart default: us category ka last-used account + mode pre-fill (editable)
+    // User ne khud mode/account chhua? to category badalne par unhe overwrite mat karo
+    let modeTouched = false, accountTouched = false;
+    // Smart default: us category ka last-used account + mode pre-fill (editable). Udhaar khud se nahi lagta.
     const applyCatDefault = (cat) => {
       const d = catDefault(cat); if (!d) return;
-      if (d.mode) { setChip(root, 'mode', d.mode); toggleAccount(d.mode); }
-      if (d.acc && state.accounts.some((a) => a.id === d.acc)) root.querySelector('#f-account').value = d.acc;
+      if (!modeTouched && d.mode && d.mode !== 'Udhaar') { setChip(root, 'mode', d.mode); toggleAccount(d.mode); }
+      if (!accountTouched && d.acc && state.accounts.some((a) => a.id === d.acc)) root.querySelector('#f-account').value = d.acc;
     };
 
     renderCatChips(t.category);
     updItems(t.category); toggleBlocks(t.category);
-    bindChips(root, 'mode', (m) => toggleAccount(m));
+    bindChips(root, 'mode', (m) => { modeTouched = true; toggleAccount(m); });
+    root.querySelector('#f-account').addEventListener('change', () => { accountTouched = true; });
     toggleAccount(t.payment_mode);
 
     const qty = root.querySelector('#f-qty'), rate = root.querySelector('#f-rate'), amount = root.querySelector('#f-amount'), prev = root.querySelector('#amt-prev');
@@ -893,17 +910,22 @@ function openOutForm(existing) {
     // Sirf "edit hai" isliye manual nahi — warna qty/rate badalne par amount purana reh jata tha.
     let manual = !!(existing && existing.amount != null && (existing.qty == null || existing.rate == null ||
       Number(existing.amount).toFixed(2) !== lineAmount(existing.qty, existing.rate, existing.unit).toFixed(2)));
+    // Eint/Hazaar jaise per-1000 unit par Rate ka label "/ 1000" dikhao (taaki per-piece rate na daale)
+    const rateLabel = root.querySelector('#rate-label');
+    const syncRateLabel = () => { rateLabel.textContent = PER_1000_UNITS.includes(unitEl.value) ? tr('Rate ₹ / 1000', 'Rate ₹ / 1000') : tr('Rate ₹', 'Rate ₹'); };
     const calc = () => {
-      const q = parseFloat(qty.value), r = parseFloat(rate.value);
+      syncRateLabel();
+      const q = num(qty.value), r = num(rate.value);
       if (!isNaN(q) && !isNaN(r)) {
         const per1000 = PER_1000_UNITS.includes(unitEl.value);
         const amt = lineAmount(q, r, unitEl.value);
-        prev.innerHTML = `${q} × ${inr(r)}${per1000 ? ' ÷ 1000' : ''} = <b>${inr(amt)}</b>`;
+        prev.innerHTML = `${q} × ${inr(r)}${per1000 ? ' <b>÷ 1000</b>' : ''} = <b>${inr(amt)}</b>`;
         if (!manual) amount.value = amt.toFixed(2).replace(/\.00$/, '');
       } else prev.textContent = '';
     };
-    // Amount khaali kar diya → wapas qty×rate se auto-calc; warna jo type kiya wahi manual amount
-    qty.oninput = calc; rate.oninput = calc; amount.oninput = () => { manual = amount.value.trim() !== ''; calc(); }; calc();
+    // Qty/rate badle → amount dobara auto (preview = jo save hoga). Amount khud type karo → manual.
+    const onQtyRate = () => { manual = false; calc(); };
+    qty.oninput = onQtyRate; rate.oninput = onQtyRate; amount.oninput = () => { manual = amount.value.trim() !== ''; calc(); }; calc();
 
     // Item ke hisaab se unit auto-set (reta/bajri/mitti → Sakda), jab tak user khud unit na badle
     let unitTouched = !!(existing && existing.unit);
@@ -921,10 +943,11 @@ function openOutForm(existing) {
     let rateNoticed = false, rateAuto = false;
     const maybeFillRate = () => {
       if (rate.value.trim() !== '' && !rateAuto) return;          // user ka type kiya rate na badlo
-      const rb = rbGet(itemEl.value, vendorEl.value);
+      if (!vendorEl.value.trim()) return;                         // dukaan pata nahi → rate guess mat karo
+      const rb = rbGetExact(itemEl.value, vendorEl.value);        // sirf isi item + isi dukaan ka pichla rate
       if (rb != null && String(rb) !== rate.value) {
-        rate.value = rb; rateAuto = true; calc();
-        if (!rateNoticed) { rateNoticed = true; toast(tr('Filled last used rate — you can change it', 'Pichli baar ka rate bhar diya — badal sakte ho')); }
+        rate.value = rb; rateAuto = true; manual = false; calc();
+        toast(tr(vendorEl.value.trim() + "'s last rate ₹" + rb + ' filled — change if needed', vendorEl.value.trim() + ' ka pichla rate ₹' + rb + ' bhara — badal sakte ho'));
       }
     };
     rate.addEventListener('input', () => { rateAuto = false; });  // user ne rate chheda → ab manual
@@ -958,7 +981,7 @@ function openOutForm(existing) {
       const mode = chipVal(root, 'mode');
       const rec = {
         id: t.id, type: 'Out', date: root.querySelector('#f-date').value || today(),
-        category: cat, amount: parseFloat(amount.value) || 0,
+        category: cat, amount: num(amount.value) || 0,
         account_id: mode === 'Udhaar' ? null : (root.querySelector('#f-account').value || null),
         payment_mode: mode,
         vendor: root.querySelector('#f-vendor').value.trim() || null,
@@ -969,11 +992,14 @@ function openOutForm(existing) {
       else if (cat === 'Architect') { /* seedha payment — sirf amount + vendor + note */ }
       else {
         rec.item = itemEl.value.trim() || null;
-        const q = parseFloat(qty.value), r = parseFloat(rate.value);
+        const q = num(qty.value), r = num(rate.value);
         rec.qty = isNaN(q) ? null : q; rec.unit = unitEl.value; rec.rate = isNaN(r) ? null : r;
         // amount hamesha qty×rate ke barabar rahe (jab tak user ne khud amount na badla ho)
-        if (!manual && !isNaN(q) && !isNaN(r)) rec.amount = lineAmount(q, r, rec.unit);
-        rbSet(rec.item, rec.vendor, rec.rate);   // is item (+ shop) ka rate yaad rakho
+        // rate-book sirf tab yaad rakho jab amount qty×rate se bana — manual amount ke saath rate galat ho sakta hai
+        if (!manual && !isNaN(q) && !isNaN(r)) {
+          rec.amount = lineAmount(q, r, rec.unit);
+          rbSet(rec.item, rec.vendor, rec.rate);
+        }
       }
       rec.amount = money(rec.amount);   // paise tak round (float drift store na ho)
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
@@ -1097,18 +1123,43 @@ function openEntryDetail(t) {
 function openSettleForm(t) {
   const inner = `
     <h3>✅ ${tr('Udhaar paid', 'Udhaar chukaya')}</h3>
-    <p class="muted" style="margin:0 2px 8px">${esc(t.vendor || tr('Vendor', 'Vendor'))} — ${inr(t.amount)}. ${tr('From which account and mode did you pay?', 'Ab kis account se aur kis mode se diya?')}</p>
-    <div class="field"><label>${tr('Account', 'Account')}</label><select id="s-acc">${accOptions(t.account_id)}</select></div>
+    <p class="muted" style="margin:0 2px 8px">${esc(t.vendor || tr('Vendor', 'Vendor'))} — ${tr('total udhaar', 'kul udhaar')} ${inr(t.amount)}. ${tr('How much did you pay, and from where?', 'Kitna diya aur kahan se?')}</p>
+    <div class="field"><label>${tr('Amount paid ₹', 'Kitna diya ₹')}</label><input id="s-amt" type="text" inputmode="decimal" value="${t.amount ?? ''}" /><div class="amt-preview" id="s-prev"></div></div>
+    <div class="field"><label>${tr('Account (paid from)', 'Account (kahan se diya)')}</label><select id="s-acc"><option value="">— ${tr('Choose account', 'Account chuno')} —</option>${accOptions(null)}</select></div>
     <div class="field"><label>${tr('Mode', 'Mode')}</label>${chipsHtml('smode', PAY_MODES.filter((m) => m !== 'Udhaar'), 'Cash')}</div>
-    <div class="field"><label>${tr('Date', 'Date')}</label><input id="s-date" type="date" value="${today()}" /></div>
     <button class="btn-primary" id="save">💾 ${tr('Mark paid', 'Paid mark karo')}</button>
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
     bindChips(root, 'smode');
+    const amtEl = root.querySelector('#s-amt'), prev = root.querySelector('#s-prev');
+    const total = money(Number(t.amount) || 0);
+    const showPrev = () => {
+      const paid = num(amtEl.value);
+      if (isNaN(paid) || paid <= 0) { prev.textContent = ''; return; }
+      if (paid >= total) prev.innerHTML = `<b>${tr('Full paid', 'Poora chukaya')}</b>`;
+      else prev.innerHTML = `${tr('Remaining', 'Baaki')}: <b>${inr(total - paid)}</b> ${tr('(stays as Udhaar)', '(Udhaar hi rahega)')}`;
+    };
+    amtEl.oninput = showPrev; showPrev();
     root.querySelector('#cancel').onclick = closeSheet;
     root.querySelector('#save').onclick = async () => {
-      const rec = Object.assign({}, t, { payment_mode: chipVal(root, 'smode'), account_id: root.querySelector('#s-acc').value, date: root.querySelector('#s-date').value || t.date });
-      await saveTx(rec, false); closeSheet(); toast(tr('Udhaar marked paid', 'Udhaar paid mark ho gaya'));
+      const acc = root.querySelector('#s-acc').value;
+      if (!acc) return toast(tr('Choose the paying account', 'Account chuno jahan se diya'), true);
+      const mode = chipVal(root, 'smode');
+      let paid = num(amtEl.value);
+      if (isNaN(paid) || paid <= 0) return toast(tr('Enter amount paid', 'Kitna diya wo daalo'), true);
+      paid = money(paid);
+      if (paid >= total) {
+        // poora chukaya → wahi entry paid ban jaati hai (original kharch ki date waisi ki waisi)
+        await saveTx(Object.assign({}, t, { payment_mode: mode, account_id: acc }), false);
+      } else {
+        // aadha chukaya → is entry ka utna paid; baaki ke liye nayi Udhaar entry (same date/item/vendor)
+        const paidRec = Object.assign({}, t, { amount: paid, payment_mode: mode, account_id: acc });
+        const remRec = Object.assign({}, t, { id: uid(), amount: money(total - paid), payment_mode: 'Udhaar', account_id: null });
+        delete remRec.created_at;   // nayi entry → naya timestamp saveTx laga dega
+        await saveTx(paidRec, false);
+        await saveTx(remRec, true);
+      }
+      closeSheet(); toast(tr('Udhaar updated ✅', 'Udhaar update ho gaya ✅'));
     };
   });
 }
@@ -1143,8 +1194,8 @@ function openThekaForm(existing) {
     <div class="field"><label>${tr('Work (theka for what)', 'Kaam (kis cheez ka theka)')}</label><input id="t-kaam" value="${esc(c.kaam || '')}" placeholder="${tr('e.g. Civil / Roof / Plaster', 'jaise Civil / Chhat / Plaster')}" /></div>
 
     <div class="section-label" style="margin-top:8px">${tr('Amount from sq-ft (optional)', 'Sq-ft se amount (optional)')}</div>
-    <div class="row2"><div class="field"><label>${tr('Ground sqft', 'Ground sqft')}</label><input id="t-g-area" type="number" inputmode="decimal" placeholder="0" /></div><div class="field"><label>${tr('₹ / sqft', '₹ / sqft')}</label><input id="t-g-rate" type="number" inputmode="decimal" value="160" /></div></div>
-    <div class="row2"><div class="field"><label>${tr('1st floor sqft', '1st floor sqft')}</label><input id="t-f-area" type="number" inputmode="decimal" placeholder="0" /></div><div class="field"><label>${tr('₹ / sqft', '₹ / sqft')}</label><input id="t-f-rate" type="number" inputmode="decimal" value="180" /></div></div>
+    <div class="row2"><div class="field"><label>${tr('Ground sqft', 'Ground sqft')}</label><input id="t-g-area" type="number" inputmode="decimal" placeholder="0" /></div><div class="field"><label>${tr('₹ / sqft', '₹ / sqft')}</label><input id="t-g-rate" type="number" inputmode="decimal" placeholder="${tr('rate', 'rate')}" /></div></div>
+    <div class="row2"><div class="field"><label>${tr('1st floor sqft', '1st floor sqft')}</label><input id="t-f-area" type="number" inputmode="decimal" placeholder="0" /></div><div class="field"><label>${tr('₹ / sqft', '₹ / sqft')}</label><input id="t-f-rate" type="number" inputmode="decimal" placeholder="${tr('rate', 'rate')}" /></div></div>
     <div class="amt-preview" id="t-sqft-prev"></div>
 
     <div class="field"><label>${tr('Theka amount ₹', 'Theka amount ₹')}</label><input id="t-amt" type="number" inputmode="decimal" step="any" value="${c.theka_amount ?? ''}" placeholder="0" /></div>
@@ -1162,12 +1213,13 @@ function openThekaForm(existing) {
     const calcSqft = (writeAmt = true) => {
       const ga = parseFloat(gArea.value) || 0, gr = parseFloat(gRate.value) || 0, fa = parseFloat(fArea.value) || 0, fr = parseFloat(fRate.value) || 0;
       if (!ga && !fa) { sqPrev.textContent = ''; return; }
-      const total = ga * gr + fa * fr; if (writeAmt) amtEl.value = money(total);
+      const total = ga * gr + fa * fr;
+      if (writeAmt && total > 0) amtEl.value = money(total);   // sirf tab likho jab sach me total bana (rate blank → amount na mite)
       sqPrev.innerHTML = `${ga ? ga + '×₹' + gr : ''}${ga && fa ? ' + ' : ''}${fa ? fa + '×₹' + fr : ''} = <b>${inr(total)}</b>`;
     };
-    // Jab tak user ne amount khud na chhua ho, sqft edit amount bharta rahe. Manually badal diya to
-    // sqft chhedne par bhi amount na badle (warna negotiate kiya hua theka_amount mit jaata tha).
-    let amtTouchedManually = false;
+    // Jab tak user ne amount khud na chhua ho, sqft edit amount bharta rahe. Manually/hand-set amount ko
+    // sqft chhedne par na mitao (warna negotiate kiya hua lump-sum theka_amount overwrite ho jaata tha).
+    let amtTouchedManually = !!(existing && Number(c.theka_amount) > 0 && !sp.sqft);
     amtEl.oninput = () => { amtTouchedManually = true; };
     const onSqft = () => calcSqft(!amtTouchedManually);
     gArea.oninput = onSqft; gRate.oninput = onSqft; fArea.oninput = onSqft; fRate.oninput = onSqft;
@@ -1210,7 +1262,8 @@ function openAccountForm(existing) {
     <h3>${existing ? tr('✏️ Edit account', '✏️ Account edit') : tr('➕ New Account', '➕ Naya Account')}</h3>
     <div class="field"><label>${tr('Name', 'Naam')}</label><input id="a-name" value="${esc(a.name || '')}" placeholder="${tr('e.g. HDFC Bank / Cash', 'jaise HDFC Bank / Cash')}" /></div>
     <div class="field"><label>${tr('Type', 'Type')}</label>${chipsHtml('atype', ['Cash', 'Bank'], a.type)}</div>
-    <div class="field"><label>${tr('Opening balance ₹ (initial amount)', 'Opening balance ₹ (shuru me kitna tha)')}</label><input id="a-open" type="number" inputmode="decimal" step="any" value="${a.opening_balance ?? 0}" /></div>
+    <div class="field"><label>${tr('Opening balance ₹ (starting amount)', 'Opening balance ₹ (shuruaati amount)')}</label><input id="a-open" type="text" inputmode="decimal" value="${a.opening_balance ?? 0}" />
+      <div class="muted" style="margin-top:6px">${tr('This is the STARTING amount (not the current balance). Entries add on top of it.', 'Ye SHURUAATI amount hai (aaj ka balance nahi). Entries iske upar judti hain.')}</div></div>
     <div class="field"><label>${tr('Track running balance?', 'Iska balance track karu?')}</label>${chipsHtml('track', ['Yes', 'No'], accTracked(a) ? 'Yes' : 'No')}
       <div class="muted" style="margin-top:6px">${tr('Turn OFF for bank if you only log payments — no balance is shown, just total spent.', 'Bank ke liye OFF rakho agar sirf payment log karne hain — balance nahi dikhega, sirf total gaya.')}</div></div>
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
@@ -1225,7 +1278,10 @@ function openAccountForm(existing) {
       await deleteRow('accounts', a.id); closeSheet(); refresh(); toast(tr('Account deleted', 'Account delete'));
     };
     root.querySelector('#save').onclick = async () => {
-      const rec = { id: a.id, user_id: userId(), name: root.querySelector('#a-name').value.trim() || 'Account', type: chipVal(root, 'atype'), opening_balance: parseFloat(root.querySelector('#a-open').value) || 0, notes: chipVal(root, 'track') === 'No' ? '[[notrack]]' : null };
+      // Khaali/galat opening balance ko chup-chaap 0 mat karo — edit me purana rakho (balance gum na ho)
+      const openN = num(root.querySelector('#a-open').value);
+      const opening = isNaN(openN) ? (existing ? (Number(a.opening_balance) || 0) : 0) : openN;
+      const rec = { id: a.id, user_id: userId(), name: root.querySelector('#a-name').value.trim() || 'Account', type: chipVal(root, 'atype'), opening_balance: opening, notes: chipVal(root, 'track') === 'No' ? '[[notrack]]' : null };
       const i = state.accounts.findIndex((x) => x.id === a.id);
       if (i >= 0) state.accounts[i] = rec; else state.accounts.push(rec);
       cacheSet('accounts', state.accounts);
