@@ -27,6 +27,7 @@ function tr(en, hi) { return lang === 'hi' ? (hi != null ? hi : en) : en; }
 /* --------------------------- Constants ---------------------------- */
 const CATEGORIES = ['Material', 'Labour', 'Theka Payment', 'Architect', 'Misc'];
 const PAY_MODES = ['Cash', 'UPI', 'Net Banking', 'Online', 'Udhaar'];
+const BANK_MODES = ['UPI', 'Net Banking', 'Online'];   // ye modes Bank account se jaate hain
 const SOURCES = ['Bank Withdrawal', 'Salary', 'Loan', 'Borrowed', 'Savings', 'Sale', 'Other'];
 const UNITS = ['Sakda', 'Trolley', 'Tractor', 'Truck', 'Bori', 'Kg', 'Quintal', 'Ton', 'Nag', 'Number', 'Hazaar', 'Ft', 'Sq Ft', 'Din', 'Litre', 'Tanker', 'Bundle'];
 // Per-1000 pricing: in units me rate 1000 units ka hota hai (eint → Hazaar). Amount = qty × rate ÷ 1000.
@@ -303,6 +304,17 @@ async function ensureDefaultAccounts() {
 /* ------------------------ Balance / reports ----------------------- */
 function accById(id) { return state.accounts.find((a) => a.id === id); }
 function accName(id) { const a = accById(id); return a ? a.name : '—'; }
+// Mode ke hisaab se sahi account: Cash -> Cash-type account, UPI/Net Banking/Online -> Bank-type.
+// Current account pehle se sahi type ka ho to wahi rakho; warna us type ka pehla account.
+function accountForMode(mode, curId) {
+  if (mode === 'Udhaar') return null;
+  const wantType = mode === 'Cash' ? 'Cash' : (BANK_MODES.includes(mode) ? 'Bank' : null);
+  if (!wantType) return curId || null;
+  const cur = accById(curId);
+  if (cur && cur.type === wantType) return curId;
+  const match = state.accounts.find((a) => a.type === wantType);
+  return match ? match.id : (curId || null);
+}
 
 function balanceOf(accId) {
   const a = accById(accId); if (!a) return 0;
@@ -844,7 +856,9 @@ function openOutForm(existing) {
   // isEdit = sach me purani saved entry (Repeat me clone ka naya id hota hai → new entry)
   const isEdit = !!(existing && state.transactions.some((x) => x.id === existing.id));
   const md = catDefault('Material') || {};
-  const t = existing || { id: uid(), type: 'Out', date: today(), category: 'Material', payment_mode: (md.mode && md.mode !== 'Udhaar') ? md.mode : 'Cash', account_id: (md.acc && state.accounts.some((a) => a.id === md.acc)) ? md.acc : (state.accounts[0] || {}).id };
+  const defMode = (md.mode && md.mode !== 'Udhaar') ? md.mode : 'Cash';
+  // Account mode se aayega (Cash mode -> Cash account), last-used se nahi — warna ek Bank entry sabko Bank bana deti thi
+  const t = existing || { id: uid(), type: 'Out', date: today(), category: 'Material', payment_mode: defMode, account_id: accountForMode(defMode, md.acc) || (state.accounts[0] || {}).id };
   const itemsDL = 'dl-items';
   // Purani entry ka unit agar list me na ho to bhi use option me rakho (warna save par chup-chaap badal jata)
   const unitOpts = (t.unit && !UNITS.includes(t.unit)) ? [t.unit, ...UNITS] : UNITS;
@@ -924,16 +938,29 @@ function openOutForm(existing) {
     const toggleAccount = (mode) => { root.querySelector('#account-field').classList.toggle('hidden', mode === 'Udhaar'); };
     // User ne khud mode/account chhua? to category badalne par unhe overwrite mat karo
     let modeTouched = false, accountTouched = false;
-    // Smart default: us category ka last-used account + mode pre-fill (editable). Udhaar khud se nahi lagta.
+    // Account ko current mode ke type se sync karo (last-used acc se nahi — Bank-trap khatam)
+    const syncAccountToMode = () => {
+      if (accountTouched) return;                       // user ne khud account chuna to na chhedo
+      const sel = root.querySelector('#f-account'); if (!sel) return;
+      const acc = accountForMode(chipVal(root, 'mode'), sel.value);
+      if (acc) sel.value = acc;
+    };
+    // Smart default: us category ka last-used mode pre-fill (Udhaar nahi). Account mode ke type se aata hai.
     const applyCatDefault = (cat) => {
       const d = catDefault(cat); if (!d) return;
       if (!modeTouched && d.mode && d.mode !== 'Udhaar') { setChip(root, 'mode', d.mode); toggleAccount(d.mode); }
-      if (!accountTouched && d.acc && state.accounts.some((a) => a.id === d.acc)) root.querySelector('#f-account').value = d.acc;
+      syncAccountToMode();
     };
 
     renderCatChips(t.category);
     updItems(t.category); toggleBlocks(t.category);
-    bindChips(root, 'mode', (m) => { modeTouched = true; toggleAccount(m); });
+    // Mode chuna → account us type ka set (Cash->Cash, UPI/NetBanking/Online->Bank). Yehi asli fix.
+    bindChips(root, 'mode', (m) => {
+      modeTouched = true; toggleAccount(m);
+      const sel = root.querySelector('#f-account');
+      const acc = accountForMode(m, sel.value);   // sahi-type ho to wahi rahega
+      if (acc) sel.value = acc;
+    });
     root.querySelector('#f-account').addEventListener('change', () => { accountTouched = true; });
     toggleAccount(t.payment_mode);
 
