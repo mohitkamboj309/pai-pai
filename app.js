@@ -789,12 +789,22 @@ function buildShell() {
     </header>
     <main id="screen"></main>
     <nav class="bottom-nav" id="nav"></nav>
+    <aside class="side-nav" id="side-nav" aria-label="${esc(tr('Main menu', 'Menu'))}"></aside>
   `;
   $('#nav').innerHTML = [
     ['dashboard', '🏠', tr('Home', 'Home')], ['entries', '📒', tr('Entries', 'Entries')], ['reports', '📊', tr('Reports', 'Reports')],
     ['theka', '👥', tr('Khata', 'Khata')], ['settings', '⚙️', tr('Settings', 'Settings')]
   ].map(([v, i, l]) => `<button class="nav-item" data-view="${v}"><span class="ico">${i}</span>${l}</button>`).join('');
   $('#nav').addEventListener('click', (e) => { const b = e.target.closest('.nav-item'); if (b) { if (b.dataset.view === 'entries') state.entriesFrom = null; show(b.dataset.view); } });
+  // Laptop/desktop (>=1100px): left sidebar — wahi 5 tab + naya kharcha (CSS hi decide karta hai kaunsa nav dikhe)
+  $('#side-nav').innerHTML = `<div class="side-brand"><img src="icons/icon-192.png" alt="" /><b>Pai-Pai</b></div>
+    <button type="button" class="side-new" id="side-new">💸 ${tr('New expense', 'Naya kharcha')} <kbd>N</kbd></button>` + [
+    ['dashboard', '🏠', tr('Home', 'Home')], ['entries', '📒', tr('Entries', 'Entries')], ['reports', '📊', tr('Reports', 'Reports')],
+    ['theka', '👥', tr('Khata', 'Khata')], ['settings', '⚙️', tr('Settings', 'Settings')]
+  ].map(([v, i, l]) => `<button type="button" class="side-item" data-view="${v}"><span class="ico">${i}</span><span>${l}</span></button>`).join('') +
+    `<div class="side-help">${tr('Shortcuts', 'Shortcuts')}: <kbd>N</kbd> ${tr('new expense', 'naya kharcha')} · <kbd>/</kbd> ${tr('search', 'search')} · <kbd>Esc</kbd> ${tr('close', 'band')}</div>`;
+  $('#side-nav').addEventListener('click', (e) => { const b = e.target.closest('.side-item'); if (b) { if (b.dataset.view === 'entries') state.entriesFrom = null; show(b.dataset.view); } });
+  $('#side-new').onclick = () => openOutForm();
   // Sticky din-headers app-header ke neeche chipkein
   const setHdr = () => { const h = document.querySelector('.app-header'); if (h) document.documentElement.style.setProperty('--hdr-h', h.offsetHeight + 'px'); };
   setHdr(); if (!window.__ppHdr) { window.__ppHdr = true; window.addEventListener('resize', setHdr); }
@@ -833,7 +843,7 @@ function show(view, opts) {
 // scrollY diya ho to wahan; warna (refresh) jahan the wahin rehna
 function renderScreen(scrollY) {
   const keepY = window.scrollY;
-  const navs = document.querySelectorAll('.nav-item');
+  const navs = document.querySelectorAll('.nav-item, .side-item');
   navs.forEach((n) => n.classList.toggle('active', n.dataset.view === state.view));
   const screen = $('#screen'); if (!screen) return;
   let r;
@@ -998,21 +1008,25 @@ function screenDashboard() {
         <div class="ql-foot"><input id="ql-date" type="date" value="${today()}" /><button class="btn-secondary" id="ql-save" disabled>${tr('Save', 'Save')}</button></div>
       </div>` : ''}
 
+      <div class="dash-cards">
       <div class="balance-row">
-        <div class="bal-card cash tap" data-go="cash"><div class="label">💵 ${cashTracked ? tr('Cash in hand', 'Cash haath me') : tr('Cash spent', 'Cash se gaya')}</div><div class="amt">${inr(cashVal)}</div></div>
-        <div class="bal-card bank tap" data-go="bank"><div class="label">🏦 ${bankTracked ? tr('In bank', 'Bank me') : tr('Bank spent', 'Bank se gaya')}</div><div class="amt">${inr(bankVal)}</div></div>
+        <div class="bal-card cash tap" data-go="cash" tabindex="0" role="button"><div class="label">💵 ${cashTracked ? tr('Cash in hand', 'Cash haath me') : tr('Cash spent', 'Cash se gaya')}</div><div class="amt">${inr(cashVal)}</div></div>
+        <div class="bal-card bank tap" data-go="bank" tabindex="0" role="button"><div class="label">🏦 ${bankTracked ? tr('In bank', 'Bank me') : tr('Bank spent', 'Bank se gaya')}</div><div class="amt">${inr(bankVal)}</div></div>
       </div>
       <div class="stat-row">
-        <div class="stat tap" data-go="kul"><div class="label">${tr('House total spent', 'Ghar ka kul kharcha')}</div><div class="amt spend">${inr(kul)}</div>${personal > 0 ? `<div class="sub-note">+ ${tr('Personal', 'Personal')} ${inr(personal)}</div>` : ''}</div>
-        <div class="stat tap" data-go="month"><div class="label">${tr('This month', 'Is mahine')}</div><div class="amt spend">${inr(isMah)}</div><div class="sub-note">${tr('Last month', 'Pichle mahine')} ${inr(pichla)}</div></div>
+        <div class="stat tap" data-go="kul" tabindex="0" role="button"><div class="label">${tr('House total spent', 'Ghar ka kul kharcha')}</div><div class="amt spend">${inr(kul)}</div>${personal > 0 ? `<div class="sub-note">+ ${tr('Personal', 'Personal')} ${inr(personal)}</div>` : ''}</div>
+        <div class="stat tap" data-go="month" tabindex="0" role="button"><div class="label">${tr('This month', 'Is mahine')}</div><div class="amt spend">${inr(isMah)}</div><div class="sub-note">${tr('Last month', 'Pichle mahine')} ${inr(pichla)}</div></div>
       </div>
+      </div>
+
+      <div class="dash-grid">
 
       ${budget ? (() => { const pct = Math.min(100, Math.round(kul / budget * 100)); const left = budget - kul; return `<div class="report-card" style="margin-top:12px"><h4>🏠 ${tr('Budget', 'Budget')}</h4>
         <div class="bar ${kul > budget ? 'red' : ''}"><span style="width:${pct}%"></span></div>
         <div class="muted" style="margin-top:6px">${inr(kul)} / ${inr(budget)} · ${pct}% · ${left >= 0 ? tr('left ', 'baaki ') + inr(left) : tr('over by ', 'budget se upar ') + inr(-left)}</div></div>`; })() : ''}
 
       ${dena.length ? `<div class="report-card" style="margin-top:12px"><h4>🧾 ${tr('To pay / pending', 'Dena baaki / pending')}</h4>
-        ${dena.map((r) => `<div class="rrow tap" data-party="${esc(r.party)}"><div class="k">${esc(r.label)}</div><div class="v" style="color:${r.color}">${esc(r.v)}</div></div>`).join('')}</div>` : ''}
+        ${dena.map((r) => `<div class="rrow tap" data-party="${esc(r.party)}" tabindex="0" role="button"><div class="k">${esc(r.label)}</div><div class="v" style="color:${r.color}">${esc(r.v)}</div></div>`).join('')}</div>` : ''}
 
       <div class="report-card chart-card">
         <div class="chart-head">
@@ -1027,6 +1041,7 @@ function screenDashboard() {
       </div>
 
       ${hasMonthData ? `<div class="report-card chart-card"><h4>📅 ${tr('Monthly spend (6 months)', 'Mahine-wise kharcha (6 mahine)')}</h4>${barSVG(months)}</div>` : ''}
+      </div>
 
       <div class="section-label sl-row"><span>${tr('Recent', 'Recent')}</span>${recent.length ? `<button type="button" class="link-btn" id="see-all">${tr('See all', 'Sab entries')} ›</button>` : ''}</div>
       <div class="list">${recent.length ? recent.map((t) => entryRow(t)).join('') : emptyState(tr('No entries yet. Start from the buttons above 👆', 'Abhi koi entry nahi. Upar se shuru karein 👆'))}</div>
@@ -1116,7 +1131,7 @@ function entryRow(t, opts) {
   const note = cleanNote(t.notes);
   if (note) bits.push(`<span class="nt">📝 ${esc(note)}</span>`);
   const tag = t.payment_mode === 'Udhaar' ? '<span class="tag udhaar">Udhaar</span>' : (paidOn(t.notes) ? `<span class="tag paid">${esc(tr('settled', 'chukaya'))}</span>` : '');
-  return `<div class="entry ${cls}${opts.noDate ? ' compact' : ''}" data-id="${esc(t.id)}"${t.payment_mode === 'Udhaar' ? ' data-ud="1"' : ''}>
+  return `<div class="entry ${cls}${opts.noDate ? ' compact' : ''}" data-id="${esc(t.id)}" tabindex="0" role="button"${t.payment_mode === 'Udhaar' ? ' data-ud="1"' : ''}>
     <div class="ic">${ico}</div>
     <div class="body">
       <div class="ttl">${tag}${title}</div>
@@ -1137,7 +1152,10 @@ function bindEntryRows(root) {
         openEntriesWith({ party: pl.dataset.party }, { refine: state.view === 'entries' && !inSheet });
         return;
       }
-      const t = state.transactions.find((x) => x.id === el.dataset.id); if (t) openEntryDetail(t);
+      const t = state.transactions.find((x) => x.id === el.dataset.id); if (!t) return;
+      // Laptop pe Entries list ki row → detail right pane me (sheet nahi)
+      if (paneMode() && el.closest('#ef-list')) { state.efSel = t.id; renderPane(); return; }
+      openEntryDetail(t);
     };
   });
 }
@@ -1161,7 +1179,7 @@ function screenEntries() {
       </div>
       <div id="ef-active"></div>
       <div id="ef-sum" class="ef-sum"></div>
-      <div id="ef-list"></div>
+      <div class="ef-split"><div id="ef-list"></div><aside class="ef-pane" id="ef-pane" aria-live="polite"></aside></div>
     </div>`;
   const bind = () => {
     renderEntriesList();
@@ -1225,6 +1243,7 @@ function renderEntriesList() {
   const csv = $('#ef-csv'); if (csv) csv.onclick = () => exportCSV(rows, filterActive(f) ? 'filtered-' : '');
   const sv = $('#ef-save-view'); if (sv) sv.onclick = openSaveView;
   const more = $('#ef-more'); if (more) more.onclick = () => { efLimit += EF_PAGE; renderEntriesList(); };
+  renderPane();
   const ve = $('#ef-vedit'); if (ve) ve.onclick = () => { viewEdit = !viewEdit; renderEntriesList(); };
   $('#ef-views').querySelectorAll('[data-vx]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); deleteSavedView(+b.dataset.vx); });
   $('#ef-views').querySelectorAll('.vchip').forEach((b) => {
@@ -1331,14 +1350,14 @@ function reportList(title, rows, partFn, opts) {
   opts = opts || {};
   if (!rows.length) return `<div class="report-card"><h4>${title}</h4><div class="muted">${tr('Nothing in this range', 'Is range me kuch nahi')}</div></div>`;
   const max = Math.max(1, ...rows.map((r) => Math.abs(r.amount))), total = rows.reduce((s, r) => s + r.amount, 0);
-  return `<div class="report-card"><h4>${title}<span class="h4-sub">${rows.length} · ${inr(total)}</span></h4>${rows.map((r) => {
+  return `<div class="report-card list-card"><h4>${title}<span class="h4-sub">${rows.length} · ${inr(total)}</span></h4><div class="rl-rows">${rows.map((r) => {
     const w = Math.min(100, Math.max(0, Math.round(Math.abs(r.amount) / max * 100)));
     const pct = total ? Math.round(r.amount / total * 100) : 0;
     const sub = opts.sub ? opts.sub(r) : esc(`${r.count} ${tr('entries', 'entries')}${opts.pct ? ' · ' + pct + '%' : ''}`);
     const part = partFn ? partFn(r) : null;
-    return `<div class="rli ${part ? 'tap' : ''}"${part ? ` data-f="${esc(JSON.stringify(part))}"` : ''}><div class="rrow"><div class="k"><span class="ud">${esc(r.key)}</span><small>${sub}</small></div><div class="v">${inr(r.amount)}${part ? '<span class="chev">›</span>' : ''}</div></div>
+    return `<div class="rli ${part ? 'tap' : ''}"${part ? ` data-f="${esc(JSON.stringify(part))}" tabindex="0" role="button"` : ''}><div class="rrow"><div class="k"><span class="ud">${esc(r.key)}</span><small>${sub}</small></div><div class="v">${inr(r.amount)}${part ? '<span class="chev">›</span>' : ''}</div></div>
       ${opts.bar === false ? '' : `<div class="bar ${opts.red ? 'red' : ''}"><span style="width:${w}%"></span></div>`}</div>`;
-  }).join('')}</div>`;
+  }).join('')}</div></div>`;
 }
 function screenReports() {
   const f = state.f, tab = state.reportTab || 'summary';
@@ -1360,7 +1379,7 @@ function screenReports() {
       </div>
       ${f.range === 'custom' ? `<div class="row2 custom-range"><div><label class="mini-l">${tr('From', 'Kab se')}</label><input id="rf-from" type="date" value="${esc(f.from)}" /></div><div><label class="mini-l">${tr('To', 'Kab tak')}</label><input id="rf-to" type="date" value="${esc(f.to)}" /></div></div>` : ''}
       <div class="muted tap-hint">👆 ${tr('Tap any row to see its entries', 'Kisi bhi row pe tap karo — uski entries dikhengi')}</div>
-      ${body}
+      <div class="r-body r-${tab}">${body}</div>
       <button class="btn-secondary" id="csv-btn" style="width:100%;margin-top:6px">⬇️ ${tr('CSV / Excel export', 'CSV / Excel export')} (${esc(rl)})</button>
     </div>`;
   const bind = () => {
@@ -1394,7 +1413,7 @@ function reportSummary(inR, rl) {
   const aaya = groupSum('In', (t) => t.from_party || t.source || 'Other', inR);
   const fromKeys = new Set(state.transactions.filter((t) => t.type === 'In' && t.from_party).map((t) => nameKey(t.from_party)));
   const byMode = groupSum('Out', (t) => t.payment_mode, inR);
-  const tapRow = (k, v, part, color, small) => `<div class="rli tap" data-f="${esc(JSON.stringify(part))}"><div class="rrow"><div class="k">${k}${small ? `<small>${small}</small>` : ''}</div><div class="v"${color ? ` style="color:${color}"` : ''}>${v}<span class="chev">›</span></div></div></div>`;
+  const tapRow = (k, v, part, color, small) => `<div class="rli tap" data-f="${esc(JSON.stringify(part))}" tabindex="0" role="button"><div class="rrow"><div class="k">${k}${small ? `<small>${small}</small>` : ''}</div><div class="v"${color ? ` style="color:${color}"` : ''}>${v}<span class="chev">›</span></div></div></div>`;
   return `
     <div class="report-card">
       <h4>🔁 ${esc(rl)} — ${tr('In vs Out', 'Aaya vs Gaya')}</h4>
@@ -1476,13 +1495,13 @@ function reportMonth(inR) {
   const months = Object.keys(map).sort().reverse();
   if (!months.length) return `<div class="report-card"><div class="muted">${tr('Nothing in this range', 'Is range me kuch nahi')}</div></div>`;
   const max = Math.max(1, ...months.map((m) => map[m].total));
-  return `<div class="report-card"><h4>📅 ${tr('Month-wise spend', 'Mahine-wise kharcha')}<span class="h4-sub">${months.length}</span></h4>${months.map((m) => {
+  return `<div class="report-card list-card"><h4>📅 ${tr('Month-wise spend', 'Mahine-wise kharcha')}<span class="h4-sub">${months.length}</span></h4><div class="rl-rows">${months.map((m) => {
     const g = map[m], y = +m.slice(0, 4), mo = +m.slice(5, 7) - 1, b = monthBounds(y, mo);
     const top = Object.entries(g.cats).sort((a, c) => c[1] - a[1]).slice(0, 2).map(([c, v]) => `${c} ${inrShort(v)}`).join(' · ');
     const personal = g.total - g.build;
-    return `<div class="rli tap" data-f="${esc(JSON.stringify({ range: 'custom', from: b.from, to: b.to }))}"><div class="rrow"><div class="k">${esc(monthShort(mo) + ' ' + y)}<small>${esc(g.n + ' ' + tr('entries', 'entries') + ' · ' + top + (personal > 0 ? ' · ' + tr('incl. Personal ', 'Personal ') + inrShort(personal) : ''))}</small></div><div class="v">${inr(g.total)}<span class="chev">›</span></div></div>
+    return `<div class="rli tap" data-f="${esc(JSON.stringify({ range: 'custom', from: b.from, to: b.to }))}" tabindex="0" role="button"><div class="rrow"><div class="k">${esc(monthShort(mo) + ' ' + y)}<small>${esc(g.n + ' ' + tr('entries', 'entries') + ' · ' + top + (personal > 0 ? ' · ' + tr('incl. Personal ', 'Personal ') + inrShort(personal) : ''))}</small></div><div class="v">${inr(g.total)}<span class="chev">›</span></div></div>
       <div class="bar red"><span style="width:${Math.round(g.total / max * 100)}%"></span></div></div>`;
-  }).join('')}</div>`;
+  }).join('')}</div></div>`;
 }
 
 /* ========================== SCREEN: KHATA (party = khata) ========================= */
@@ -1522,7 +1541,7 @@ function khataRow(p) {
     else tags.push(`<span class="tag amber">${tr('set theka amount', 'theka amount daalo')}</span>`);
   }
   if (!p.contracts.length && !p.udhaar && p.settled > 0) tags.push(`<span class="tag">udhaar ${tr('settled', 'chuk gaya')} ✅</span>`);
-  return `<div class="krow tap" data-party="${esc(p.key)}">
+  return `<div class="krow tap" data-party="${esc(p.key)}" tabindex="0" role="button">
     <div class="k-main"><div class="k-name ud">${esc(p.name)}</div>
       ${tags.length ? `<div class="k-tags">${tags.join('')}</div>` : ''}
       <div class="k-sub">${p.n} ${tr('entries', 'entries')} · ${inr(p.paid)} ${tr('paid', 'diya')}${p.last ? ' · ' + esc(fmtDate(p.last)) : ''}</div></div>
@@ -1537,7 +1556,7 @@ function screenTheka() {
   const html = `
     <div class="screen">
       <h2 class="title">${tr('Khata (party-wise)', 'Khata (party-wise hisaab)')}</h2>
-      <div class="due-card tap" id="k-due">
+      <div class="due-card tap" id="k-due" tabindex="0" role="button">
         <div class="due-l">${tr('Total to pay', 'Kul dena baaki')}</div>
         <div class="due-v">${inr(udTotal + thekaBaaki)}</div>
         <div class="due-s">${tr('Udhaar', 'Udhaar')} ${inr(udTotal)} · ${tr('Theka left', 'Theka baaki')} ${inr(thekaBaaki)} <span class="muted">(${tr('advances not counted', 'advance nahi gina')})</span></div>
@@ -2262,7 +2281,25 @@ function openTransferForm(existing, preset) {
 
 /* =================== Entry detail (view/edit) =================== */
 // Party / category / item / mode / account pe tap → Entries us filter ke saath
-function openEntryDetail(t) {
+// Laptop (>=1100px) Entries: right pane me chuni hui entry ki detail (ya party filter ho to khata ka link)
+function paneMode() { return isDesktop() && state.view === 'entries' && !!document.getElementById('ef-pane'); }
+function renderPane() {
+  const pane = document.getElementById('ef-pane'); if (!pane) return;
+  const list = document.getElementById('ef-list');
+  if (!isDesktop()) { pane.innerHTML = ''; return; }
+  let t = state.efSel && state.transactions.find((x) => x.id === state.efSel);
+  if (t && !matchesFilter(t, state.f)) t = null;   // filter badla aur entry ab list me nahi
+  if (list) list.querySelectorAll('.entry').forEach((e) => e.classList.toggle('sel', !!t && e.dataset.id === t.id));
+  if (t) { openEntryDetail(t, { pane }); return; }
+  state.efSel = null;
+  const p = state.f.party ? parties().find((x) => x.key === nameKey(state.f.party)) : null;
+  pane.innerHTML = `<div class="pane-empty"><div class="big">👈</div>${tr('Pick an entry to see its detail here', 'Entry chuno — uski detail yahan dikhegi')}
+    ${p ? `<button type="button" class="btn-secondary" id="pane-party" style="width:100%;margin-top:14px">📒 <span class="ud">${esc(p.name)}</span> — ${tr('open khata', 'khata kholo')}</button>` : ''}
+    <div class="muted" style="margin-top:14px"><kbd>/</kbd> ${tr('search', 'search')} · <kbd>N</kbd> ${tr('new expense', 'naya kharcha')} · <kbd>Esc</kbd> ${tr('close', 'band')}</div></div>`;
+  const pb = pane.querySelector('#pane-party'); if (pb) pb.onclick = () => openParty(p.key);
+}
+function openEntryDetail(t, opts) {
+  opts = opts || {};
   const lines = [];
   lines.push([tr('Type', 'Type'), { In: tr('Money In', 'Paisa Aaya'), Out: tr('Expense', 'Kharcha'), Transfer: tr('Transfer', 'Transfer') }[t.type]]);
   lines.push([tr('Amount', 'Amount'), inr(t.amount)]);
@@ -2290,8 +2327,8 @@ function openEntryDetail(t) {
     <button class="btn-secondary" id="edit" style="width:100%;margin-top:8px">✏️ ${tr('Edit', 'Edit')}</button>
     <button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>
     <button class="btn-ghost" id="cancel">${tr('Close', 'Band karo')}</button>`;
-  openSheet(inner, (root) => {
-    root.querySelector('#cancel').onclick = closeSheet;
+  const bindDetail = (root, close) => {
+    root.querySelector('#cancel').onclick = close;
     root.querySelector('#del').onclick = () => confirmDelete(t);
     root.querySelector('#edit').onclick = () => { closeSheet(); if (t.type === 'Out') openOutForm(t); else if (t.type === 'In') openInForm(t); else openTransferForm(t); };
     root.querySelectorAll('.vlink[data-f]').forEach((b) => b.onclick = () => {
@@ -2302,7 +2339,9 @@ function openEntryDetail(t) {
     const rpt = root.querySelector('#repeat');
     if (rpt) rpt.onclick = () => { closeSheet(); const c = Object.assign({}, t, { id: uid(), date: today(), notes: cleanNote(t.notes) || null }); delete c.created_at; openOutForm(c); };
     if (isUdhaar) root.querySelector('#settle').onclick = () => { closeSheet(); openSettleForm(t); };
-  });
+  };
+  if (opts.pane) { opts.pane.innerHTML = `<div class="pane-card">${inner}</div>`; bindDetail(opts.pane, () => { state.efSel = null; renderPane(); }); return; }
+  openSheet(inner, (root) => bindDetail(root, closeSheet));
 }
 
 function openSettleForm(t) {
@@ -3005,6 +3044,53 @@ function registerSW() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
 }
 
+/* ---- Tablet / laptop: breakpoints (CSS media queries; JS sirf layout-change pe re-render) + keyboard ---- */
+const MQ_DESK = '(min-width: 1100px)', MQ_WIDE = '(min-width: 768px)';
+function isDesktop() { return !!(window.matchMedia && window.matchMedia(MQ_DESK).matches); }
+function isWide() { return !!(window.matchMedia && window.matchMedia(MQ_WIDE).matches); }
+function watchBreakpoints() {
+  if (!window.matchMedia) return;
+  const mq = window.matchMedia(MQ_DESK);
+  const on = () => { if (document.getElementById('screen') && state.view === 'entries') renderScreen(); };
+  if (mq.addEventListener) mq.addEventListener('change', on); else if (mq.addListener) mq.addListener(on);
+}
+function focusSearch() {
+  if (state.view === 'theka' && $('#k-q')) { $('#k-q').focus(); return; }
+  if (state.view !== 'entries') show('entries');
+  const q = $('#ef-q'); if (q) { q.focus(); try { q.select(); } catch (_) { } }
+}
+// Esc = sheet/dialog band · Enter (form field me, tablet/laptop) = Save · '/' = search · 'n' = naya kharcha
+// ('/' aur 'n' sirf tab jab kisi input me type nahi kar rahe aur koi sheet khuli nahi)
+function setupKeys() {
+  document.addEventListener('keydown', (e) => {
+    if (!document.querySelector('.bottom-nav')) return;   // login screen pe kuch nahi
+    const tgt = e.target;
+    const typing = !!(tgt && tgt.matches && (tgt.matches('input, textarea, select') || tgt.isContentEditable));
+    const modal = !!(modalRoot() && modalRoot().children.length);
+    if (e.key === 'Escape') {
+      if (modal) { e.preventDefault(); closeSheet(); return; }
+      if (typing && tgt.blur) { tgt.blur(); return; }
+      if (state.view === 'entries' && state.efSel) { state.efSel = null; renderPane(); }
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+    if (e.key === 'Enter') {
+      if (modal && typing && tgt.tagName === 'INPUT' && isWide() && !tgt.hasAttribute('list') && !tgt.classList.contains('mini-q') &&
+          !['checkbox', 'radio', 'button', 'submit'].includes(tgt.type) && tgt.id !== 'cat-new-input') {
+        const sheet = tgt.closest('.sheet'); const btn = sheet && sheet.querySelector('#save, #sv-save, #fs-apply');
+        if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+        return;
+      }
+      if (!typing && tgt && tgt.getAttribute && tgt.getAttribute('tabindex') === '0' && !tgt.matches('button, a')) { e.preventDefault(); tgt.click(); }
+      return;
+    }
+    if (e.key === ' ' && !typing && tgt && tgt.getAttribute && tgt.getAttribute('tabindex') === '0' && !tgt.matches('button, a')) { e.preventDefault(); tgt.click(); return; }
+    if (typing || modal) return;
+    if (e.key === '/') { e.preventDefault(); focusSearch(); }
+    else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openOutForm(); }
+  });
+}
+
 // Keyboard khulne par body.kb-open laga do → bottom-nav chhup jaye (iOS float fix)
 function setupKeyboardNav() {
   const vv = window.visualViewport;
@@ -3027,6 +3113,8 @@ async function start() {
   registerSW();
   bindConnectivity();
   setupKeyboardNav();
+  setupKeys();
+  watchBreakpoints();
   if (!initClient()) { renderAuth(); return; }
   try {
     const { data } = await sb.auth.getSession();
