@@ -965,7 +965,7 @@ kbd { font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-weight:
 .spark-wrap { position: relative; height: 54px; margin: 12px 0 0; }
 .spark { width: 100%; height: 100%; display: block; overflow: visible; }
 .sp-area { fill: var(--hero-area); }
-.sp-line { stroke: var(--hero-spark); stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.sp-line { stroke: var(--hero-spark); stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; }
 .sp-dot { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--hero-spark); box-shadow: 0 0 0 3px var(--hero-bg); }
 .spark-cap { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--hero-muted); font-weight: 550; margin-top: 6px; }
 .hero-subs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border: none; margin: 0; padding: 0; }
@@ -1047,12 +1047,12 @@ kbd { font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-weight:
 @keyframes rise { from { opacity: 0; transform: translateY(6px); } }
 @keyframes fadeIn2 { from { opacity: 0; } }
 @keyframes ringIn { from { opacity: 0; transform: rotate(-40deg) scale(.94); } }
-@keyframes draw { from { stroke-dashoffset: 1; } }
+@keyframes draw { from { stroke-dasharray: 1 1; stroke-dashoffset: 1; } to { stroke-dasharray: 1 1; stroke-dashoffset: 0; } }
 .tb-fill, .tb-over, .bar > span, .cmp-fill, .split-bar > span { transform-origin: left center; animation: growX .75s cubic-bezier(.22, .61, .36, 1) both; }
 .mc-bar { transform-origin: bottom center; animation: growY .7s cubic-bezier(.22, .61, .36, 1) both; }
 .donut, .mini-ring { animation: ringIn .7s cubic-bezier(.22, .61, .36, 1) both; }
 .hero-amt, .due-v, .tk-big b, .pc-amt { animation: rise .45s ease both; }
-.sp-line { animation: draw 1s ease .1s both; }
+.sp-line { animation: draw 1s ease .1s backwards; }   /* dash sirf animation me; baad me poori line (stretched SVG pe bhi) */
 .sp-dot { animation: fadeIn2 .3s ease .8s both; }
 .screen { animation: fadeIn2 .2s ease both; }
 .hero-main, .hero-sub, .hero-mini, .krow, .pcard, .stat-tile, .due-card, .rp-chips .chip, .link-card { transition: transform .14s ease, background-color .15s ease, border-color .15s ease; }
