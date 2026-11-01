@@ -115,10 +115,10 @@ function num(v) {
   return isNaN(n) ? NaN : n;
 }
 
-/* ---- Naam (vendor/item) ek jaisa rakhna: "Tinku biana" = "Tinku Biana" ---- */
+/* ---- Naam (vendor/item) ek jaisa rakhna: "Ram ji" = "Ram Ji" ---- */
 // Comparison key: chhote akshar, sirf a-z/0-9/Hindi, space hata ke
 function nameKey(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9ऀ-ॿ]+/g, ''); }
-// Har shabd bade akshar se? ("Tinku Biana" haan, "Tinku biana" nahi)
+// Har shabd bade akshar se? ("Ram Ji" haan, "Ram ji" nahi)
 function titledName(x) { return String(x).split(/\s+/).every((w) => !/^[a-z]/.test(w)); }
 // Kisi field ke saare naam data se: key → Title Case wali spelling, warna sabse zyada use hui
 function spellingMap(values) {
@@ -442,7 +442,7 @@ function sumOut(filterFn) {
   return state.transactions.filter((t) => t.type === 'Out' && (!filterFn || filterFn(t)))
     .reduce((s, t) => s + (Number(t.amount) || 0), 0);
 }
-// Naam ko chhote/bade akshar ya space ke fark se alag-alag mat gino ("Tinku biana" + "Tinku Biana" = ek row).
+// Naam ko chhote/bade akshar ya space ke fark se alag-alag mat gino ("Ram ji" + "Ram Ji" = ek row).
 // Row ka naam = sabse zyada use hui spelling. Data nahi badalta, sirf report me jodta hai.
 // rangeFilter: function(t) → shamil karo? (ya true = global date range)
 function groupSum(type, keyFn, rangeFilter) {
@@ -2172,7 +2172,7 @@ function openOutForm(existing, preset) {
       }
       rec.amount = money(rec.amount);   // paise tak round (float drift store na ho)
       if (!(rec.amount > 0)) { toast(tr('Enter a valid amount', 'Amount sahi daalein'), true); amount.focus(); return; }
-      // Pehle se maujood spelling use karo ("tinku biana" → "Tinku Biana") — naya variant na bane
+      // Pehle se maujood spelling use karo ("ram ji" → "Ram Ji") — naya variant na bane
       rec.vendor = canonName(rec.vendor, vendorMap()); rec.item = canonName(rec.item, itemMap());
       if (mode === 'Udhaar') rec.notes = joinNote(cleanNote(rec.notes), noteMarkers(rec.notes).replace(/\[\[paid:[^\]]*\]\]/g, '').trim());
       if (!confirmIfDup(rec, !isEdit)) return;
@@ -2658,7 +2658,7 @@ function computeCleanup() {
   names.forEach((n) => { (groups[find(n)] = groups[find(n)] || []).push(n); });
   for (const g of Object.values(groups)) {
     if (g.length < 2) continue;
-    // Title Case wali spelling pehle ("Tinku Biana" > "Tinku biana"), phir jo zyada use hui
+    // Title Case wali spelling pehle ("Ram Ji" > "Ram ji"), phir jo zyada use hui
     const canon = g.slice().sort((a, b) => titledName(b) - titledName(a) || cnt[b] - cnt[a] || b.length - a.length)[0];
     const ch = [];
     for (const t of T) if (t.vendor && g.includes(t.vendor.trim()) && t.vendor !== canon) ch.push({ table: 'transactions', id: t.id, set: { vendor: canon }, label: txLabel(t), from: t.vendor, to: canon });
