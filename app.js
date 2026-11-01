@@ -1004,7 +1004,7 @@ function renderScreen(scrollY) {
 
 /* ====================== Charts (SVG, no deps) ===================== */
 const CAT_COLOR = { 'Material': 'var(--cat-material)', 'Labour': 'var(--cat-labour)', 'Theka Payment': 'var(--cat-theka)', 'Architect': 'var(--cat-architect)', 'Misc': 'var(--cat-misc)', 'Personal': 'var(--cat-personal)' };
-let dashRange = 'month';   // dashboard donut range: month | all
+let dashRange = 'month', dashRangeUser = false;   // dashboard donut range: month | all
 
 function inrShort(n) {
   n = Number(n) || 0; const neg = n < 0; const a = Math.abs(n); let s;
@@ -1041,7 +1041,7 @@ function last6MonthsSpend() {
   }
   return out;
 }
-function donutSVG(segs, total) {
+function donutSVG(segs, total, label) {
   const r = 54, c = 2 * Math.PI * r, cx = 70, cy = 70, sw = 20; let acc = 0;
   const arcs = segs.map((s) => {
     const f = total ? s.value / total : 0;
@@ -1051,9 +1051,25 @@ function donutSVG(segs, total) {
   }).join('');
   return `<svg viewBox="0 0 140 140" class="donut">
     <circle class="donut-track" cx="${cx}" cy="${cy}" r="${r}" fill="none" stroke-width="${sw}"/>${arcs}
-    <text class="ch-lbl" x="${cx}" y="${cy - 3}" text-anchor="middle" font-size="10" font-weight="600">${tr('Total', 'Total gaya')}</text>
+    <text class="ch-lbl" x="${cx}" y="${cy - 3}" text-anchor="middle" font-size="10" font-weight="600">${label || tr('Total', 'Total gaya')}</text>
     <text class="ch-val" x="${cx}" y="${cy + 16}" text-anchor="middle" font-size="17" font-weight="750">${inrShort(total)}</text>
   </svg>`;
+}
+// Chhota ring (sirf share dikhane ke liye, bina text)
+function miniRing(segs, total) {
+  const r = 15, c = 2 * Math.PI * r; let acc = 0;
+  return `<svg viewBox="0 0 40 40" class="mini-ring" aria-hidden="true"><circle class="donut-track" cx="20" cy="20" r="${r}" fill="none" stroke-width="7"/>${segs.map((s) => { const f = total ? s.value / total : 0; const out = `<circle cx="20" cy="20" r="${r}" fill="none" style="stroke:${s.color}" stroke-width="7" stroke-dasharray="${(f * c).toFixed(2)} ${(c - f * c).toFixed(2)}" stroke-dashoffset="${(-acc * c).toFixed(2)}" transform="rotate(-90 20 20)"/>`; acc += f; return out; }).join('')}</svg>`;
+}
+// Hero sparkline: pichle 6 mahine ka ghar ka kharcha (last6MonthsSpend ke hi numbers)
+function sparkSVG(pts) {
+  const W = 300, H = 56, pad = 5, max = Math.max(1, ...pts.map((p) => p.value)), n = pts.length;
+  const xy = pts.map((p, i) => [pad + i * (W - 2 * pad) / Math.max(1, n - 1), H - pad - (p.value / max) * (H - 2 * pad)]);
+  const line = xy.map(([x, y]) => x.toFixed(1) + ',' + y.toFixed(1)).join(' ');
+  const [lx, ly] = xy[xy.length - 1];
+  return `<svg viewBox="0 0 ${W} ${H}" class="spark" preserveAspectRatio="none" aria-hidden="true" data-points="${n}">
+    <polygon class="sp-area" points="${pad},${H} ${line} ${(W - pad).toFixed(1)},${H}"/>
+    <polyline class="sp-line" pathLength="1" points="${line}" fill="none" vector-effect="non-scaling-stroke"/>
+  </svg><span class="sp-dot" style="left:${(lx / W * 100).toFixed(2)}%;top:${(ly / H * 100).toFixed(2)}%"></span>`;
 }
 function donutLegend(segs, total) {
   return `<div class="legend">${segs.map((s) => {
@@ -1104,15 +1120,15 @@ function quickLabourSource() {
 function denaBaakiRows() {
   const rows = [];
   for (const p of parties()) {
-    if (p.udhaar > 0) rows.push({ party: p.key, name: p.name, reason: `${tr('Side work udhaar', 'Side kaam udhaar')} · ${p.udhaarN} ${tr('entries', 'entries')}`, label: `${p.name} — ${tr('side work udhaar', 'side kaam udhaar')} (${p.udhaarN})`, v: inr(p.udhaar), color: 'var(--amber)' });
+    if (p.udhaar > 0) rows.push({ party: p.key, name: p.name, kind: 'udhaar', icon: 'clock', n: p.udhaarN, reason: tr('Side work udhaar', 'Side kaam udhaar'), label: `${p.name} — ${tr('side work udhaar', 'side kaam udhaar')} (${p.udhaarN})`, v: inr(p.udhaar), color: 'var(--amber)' });
   }
   for (const c of state.contracts) {
     const s = thekaStatus(c), nm = c.thekedar_name || c.kaam || tr('Theka', 'Theka'), key = nameKey(c.thekedar_name || c.kaam);
     const kaam = c.kaam && c.thekedar_name ? ' · ' + c.kaam : '';
-    if (s.kind === 'baaki') rows.push({ party: key, name: nm, s, reason: tr('Theka left', 'Theka baaki') + kaam, label: `${nm} — ${tr('theka left', 'theka baaki')}`, v: inr(s.diff), color: 'var(--red)' });
-    else if (s.kind === 'noamount') rows.push({ party: key, name: nm, s, reason: tr('Theka amount not set', 'Theka amount set nahi') + kaam, label: `${nm} — ${tr('theka amount not set', 'theka amount set nahi')}`, v: tr('set', 'daalo'), color: 'var(--amber)' });
-    else if (s.kind === 'ratewise') rows.push({ party: key, name: nm, s, reason: tr('Rate-wise, advance given', 'Rate-wise, advance diya') + kaam, label: `${nm} — ${tr('rate-wise, advance given', 'rate-wise, advance diya')}`, v: inr(s.paid), color: 'var(--amber)' });
-    else if (s.kind === 'advance') rows.push({ party: key, name: nm, s, reason: tr('Advance (measurement pending)', 'Advance (measurement baaki)') + kaam, label: `${nm} — ${tr('advance (measurement pending)', 'advance (measurement baaki)')}`, v: inr(s.diff), color: 'var(--amber)' });
+    if (s.kind === 'baaki') rows.push({ party: key, name: nm, s, kind: 'baaki', icon: 'handshake', reason: tr('Theka left', 'Theka baaki') + kaam, label: `${nm} — ${tr('theka left', 'theka baaki')}`, v: inr(s.diff), color: 'var(--red)' });
+    else if (s.kind === 'noamount') rows.push({ party: key, name: nm, s, kind: 'none', icon: 'warning', reason: tr('Amount not set', 'Amount set nahi') + kaam, label: `${nm} — ${tr('theka amount not set', 'theka amount set nahi')}`, v: tr('set', 'daalo'), color: 'var(--amber)' });
+    else if (s.kind === 'ratewise') rows.push({ party: key, name: nm, s, kind: 'adv', icon: 'ruler', reason: tr('Rate-wise', 'Rate-wise') + kaam, label: `${nm} — ${tr('rate-wise, advance given', 'rate-wise, advance diya')}`, v: inr(s.paid), color: 'var(--amber)' });
+    else if (s.kind === 'advance') rows.push({ party: key, name: nm, s, kind: 'adv', icon: 'ruler', reason: tr('Advance', 'Advance') + kaam, label: `${nm} — ${tr('advance (measurement pending)', 'advance (measurement baaki)')}`, v: inr(s.diff), color: 'var(--amber)' });
   }
   return rows;
 }
@@ -1129,8 +1145,10 @@ function screenDashboard() {
   const personal = sumOut((t) => NON_BUILD_CATS.includes(t.category));
   const budget = getBudget();
   const recent = state.transactions.slice(0, 6);
-  const segs = catSegments(dashRange === 'month');
+  const dr = !dashRangeUser && dashRange === 'month' && !catSegments(true).length ? 'all' : dashRange;
+  const segs = catSegments(dr === 'month');
   const segTotal = segs.reduce((s, x) => s + x.value, 0);
+  const allSegs = catSegments(false), allSegTotal = allSegs.reduce((s, x) => s + x.value, 0);
   const months = last6MonthsSpend();
   const hasMonthData = months.some((m) => m.value > 0);
   const dena = denaBaakiRows();
@@ -1149,16 +1167,18 @@ function screenDashboard() {
       <div class="dash-cards">
         <section class="hero-card">
           <div class="hero-main tap" data-go="cash" tabindex="0" role="button">
-            <div class="hero-label">${cashTracked ? tr('Cash in hand', 'Cash haath me') : tr('Cash spent', 'Cash se gaya')}</div>
+            <div class="hero-top"><span class="hero-label">${cashTracked ? tr('Cash in hand', 'Cash haath me') : tr('Cash spent', 'Cash se gaya')}</span><span class="hero-badge">${ic('wallet')}</span></div>
             <div class="hero-amt num">${inr(cashVal)}</div>
+            ${hasMonthData ? `<div class="spark-wrap">${sparkSVG(months)}</div><div class="spark-cap"><span>${esc(months[0].label)}</span><span>${tr('House spend · 6 months', 'Ghar ka kharcha · 6 mahine')}</span><span>${esc(months[months.length - 1].label)}</span></div>` : ''}
           </div>
           <div class="hero-subs">
-            <div class="hero-sub tap" data-go="kul" tabindex="0" role="button"><div class="label">${tr('House spend', 'Ghar ka kharcha')}</div><div class="amt num">${inr(kul)}</div>${personal > 0 ? `<div class="sub-note">+ ${tr('Personal', 'Personal')} ${inr(personal)}</div>` : ''}</div>
-            <div class="hero-sub tap" data-go="baaki" tabindex="0" role="button"><div class="label">${tr('To pay', 'Dena baaki')}</div><div class="amt num${denaTotal > 0 ? ' amber' : ''}">${inr(denaTotal)}</div></div>
+            <div class="hero-sub kul tap" data-go="kul" tabindex="0" role="button"><div class="hs-head"><div class="label">${tr('House spend', 'Ghar ka kharcha')}</div>${allSegs.length ? miniRing(allSegs, allSegTotal) : ''}</div><div class="amt num">${inr(kul)}</div>${personal > 0 ? `<div class="sub-note">+ ${tr('Personal', 'Personal')} ${inrShort(personal)}</div>` : ''}</div>
+            <div class="hero-sub dena tap" data-go="baaki" tabindex="0" role="button"><div class="label">${ic('clock')}${tr('To pay', 'Dena baaki')}</div><div class="amt num${denaTotal > 0 ? ' amber' : ''}">${inr(denaTotal)}</div>
+              ${denaTotal > 0 ? `<div class="split-bar sm" aria-hidden="true"><span class="sb-a" style="width:${Math.round(denaUd / denaTotal * 1000) / 10}%"></span><span class="sb-r" style="width:${Math.round(denaTheka / denaTotal * 1000) / 10}%"></span></div><div class="hs-leg"><span><i class="lg-dot amber"></i>${tr('Udhaar', 'Udhaar')}</span><span><i class="lg-dot red"></i>${tr('Theka', 'Theka')}</span></div>` : ''}</div>
           </div>
           <div class="hero-minis">
-            <div class="hero-mini tap" data-go="bank" tabindex="0" role="button"><span class="hm-k">${ic('bank')}${bankTracked ? tr('In bank', 'Bank me') : tr('Bank spent', 'Bank se gaya')}</span><span class="hm-v num">${inr(bankVal)}</span></div>
-            <div class="hero-mini tap" data-go="month" tabindex="0" role="button"><span class="hm-k">${ic('calendar-blank')}${tr('This month', 'Is mahine')}</span><span class="hm-v num">${inr(isMah)}<small>${tr('Last', 'Pichla')} ${inrShort(pichla)}</small></span></div>
+            <div class="hero-mini tap" data-go="bank" tabindex="0" role="button"><span class="hm-ic">${ic('bank')}</span><span class="hm-t"><span class="hm-k">${bankTracked ? tr('In bank', 'Bank me') : tr('Bank spent', 'Bank se gaya')}</span><span class="hm-v num">${inr(bankVal)}</span></span></div>
+            <div class="hero-mini tap" data-go="month" tabindex="0" role="button"><span class="hm-ic">${ic('calendar-blank')}</span><span class="hm-t"><span class="hm-k">${tr('This month', 'Is mahine')}</span><span class="hm-v num">${inr(isMah)}<small>${tr('Last', 'Pichla')} ${inrShort(pichla)}</small></span></span></div>
           </div>
         </section>
       </div>
@@ -1171,18 +1191,24 @@ function screenDashboard() {
         ${qa('transfer', 'arrows-left-right-duotone', tr('Transfer', 'Transfer'))}
       </div>
 
-      ${rp.length ? `<div class="rp-head">${tr('Recent parties — tap for new expense', 'Recent party — tap = naya kharcha')}</div>
-      <div class="filter-chips rp-chips" id="rp-chips">${rp.map((n) => `<button type="button" class="chip sm ud" data-v="${esc(n)}">${avatar(n, 'sm')}${esc(n)}</button>`).join('')}</div>` : ''}
+      ${rp.length ? `<div class="rp-head">${ic('plus')}${tr('New expense for', 'Naya kharcha')}</div>
+      <div class="filter-chips rp-chips" id="rp-chips">${rp.map((n) => `<button type="button" class="chip sm ud" data-v="${esc(n)}">${avatar(n, 'xl')}<span class="rp-n">${esc(n)}</span></button>`).join('')}</div>` : ''}
 
       <div class="dash-grid">
 
-      ${dena.length ? `<div class="report-card group-card dena-card">
-        <div class="card-head"><h4>${tr('To pay / pending', 'Dena baaki')}</h4><button type="button" class="link-btn" id="dena-all">${tr('All', 'Sab')} ›</button></div>
-        ${dena.map((r) => `<div class="rrow prow tap" data-party="${esc(r.party)}" tabindex="0" role="button" aria-label="${esc(r.label + ': ' + r.v)}">${avatar(r.name)}<div class="k"><span class="p-name ud">${esc(r.name)}</span><small class="ud">${esc(r.reason)}</small>${r.s ? thekaBar(r.s, { cls: 'sm', short: true }) : ''}</div><div class="v num" style="color:${r.color}">${esc(r.v)}</div></div>`).join('')}</div>` : ''}
+      ${dena.length ? `<div class="dena-card">
+        <div class="card-head"><h4>${tr('To pay / pending', 'Dena baaki')}<span class="h4-n">${dena.length}</span></h4><button type="button" class="link-btn" id="dena-all">${tr('All', 'Sab')} ›</button></div>
+        <div class="pc-strip">${dena.map((r) => `<div class="pcard tap" data-party="${esc(r.party)}" tabindex="0" role="button" aria-label="${esc(r.label + ': ' + r.v)}">
+          <div class="pc-top">${avatar(r.name)}<span class="pc-kind ${r.kind}">${ic(r.icon)}</span></div>
+          <div class="p-name ud">${esc(r.name)}</div>
+          <div class="pc-amt num" style="color:${r.color}">${esc(r.v)}</div>
+          <div class="pc-reason ud">${esc(r.reason)}</div>
+          ${r.s ? thekaBar(r.s, { cls: 'sm', short: true }) : `<div class="pc-foot"><span class="tag udhaar">${ic('clock')}${r.n} ${tr('entries', 'entries')}</span></div>`}
+        </div>`).join('')}</div></div>` : ''}
 
       ${ql ? `<div class="report-card ql-card" id="ql-card">
         <h4>${ic('hard-hat')}${tr('Today\'s labour', 'Aaj ki labour')} — <span class="ud">${esc(ql.vendor)}</span></h4>
-        <div class="muted" style="margin:-6px 0 10px">${tr('Tap once = 1 day, twice = ½ day, again = off', '1 tap = 1 din, 2 tap = ½ din, 3 tap = hatao')} · ${esc(ql.mode)}</div>
+        <div class="muted" style="margin:-6px 0 10px">${tr('1 tap = day · 2 = ½ · 3 = off', '1 tap = din · 2 = ½ · 3 = hatao')} · ${esc(ql.mode)}</div>
         <div class="chips" id="ql-chips">${ql.items.map((it, i) => `<button type="button" class="chip sm" data-i="${i}">${esc(it.item)}</button>`).join('')}</div>
         <div class="ql-foot"><input id="ql-date" type="date" value="${today()}" /><button class="btn-secondary" id="ql-save" disabled>${tr('Save', 'Save')}</button></div>
       </div>` : ''}
@@ -1195,12 +1221,12 @@ function screenDashboard() {
         <div class="chart-head">
           <h4>${tr('Where money went', 'Kharcha kahan gaya')}</h4>
           <div class="seg-toggle" id="dash-range">
-            <button class="${dashRange === 'month' ? 'on' : ''}" data-r="month">${tr('This month', 'Is mahina')}</button>
-            <button class="${dashRange === 'all' ? 'on' : ''}" data-r="all">${tr('All', 'Sab')}</button>
+            <button class="${dr === 'month' ? 'on' : ''}" data-r="month">${tr('This month', 'Is mahina')}</button>
+            <button class="${dr === 'all' ? 'on' : ''}" data-r="all">${tr('All', 'Sab')}</button>
           </div>
         </div>
         ${segs.length ? `<div class="donut-wrap">${donutSVG(segs, segTotal)}${donutLegend(segs, segTotal)}</div>`
-          : `<div class="empty" style="padding:22px 8px"><div class="big">${ic('chart-pie-slice')}</div>${dashRange === 'month' ? tr('No expense this month yet', 'Is mahine abhi koi kharcha nahi') : tr('No expense yet', 'Abhi koi kharcha nahi')}</div>`}
+          : `<div class="empty" style="padding:22px 8px"><div class="big">${ic('chart-pie-slice')}</div>${dr === 'month' ? tr('No expense this month yet', 'Is mahine abhi koi kharcha nahi') : tr('No expense yet', 'Abhi koi kharcha nahi')}</div>`}
       </div>
 
       ${hasMonthData ? `<div class="report-card chart-card"><h4>${tr('Monthly spend (6 months)', 'Mahine-wise kharcha (6 mahine)')}</h4>${barSVG(months)}</div>` : ''}
@@ -1226,8 +1252,8 @@ function screenDashboard() {
     });
     const da = $('#dena-all'); if (da) da.onclick = () => { state.khataTab = 'baaki'; show('theka'); };
     const rt = $('#dash-range');
-    if (rt) rt.querySelectorAll('button').forEach((b) => b.onclick = () => { dashRange = b.dataset.r; renderScreen(); });
-    $('#screen').querySelectorAll('.rrow[data-party]').forEach((el) => el.onclick = () => openParty(el.dataset.party));
+    if (rt) rt.querySelectorAll('button').forEach((b) => b.onclick = () => { dashRange = b.dataset.r; dashRangeUser = true; renderScreen(); });
+    $('#screen').querySelectorAll('.pcard[data-party]').forEach((el) => el.onclick = () => openParty(el.dataset.party));
     // Cards tappable: Cash/Bank → us account ki entries; kul → Reports Category; is mahine → is mahine ki entries
     $('#screen').querySelectorAll('[data-go]').forEach((el) => el.onclick = () => {
       const g = el.dataset.go;
@@ -1522,6 +1548,16 @@ function openFilterSheet() {
 /* ========================= SCREEN: REPORTS ======================== */
 const REPORT_TABS = [['summary', 'Summary', 'Summary'], ['category', 'Category', 'Category'], ['party', 'Party', 'Party'], ['item', 'Item', 'Item'], ['month', 'Month', 'Mahina']];
 // Report ki ek list (sab rows, bar, count). partFn(row) → filter; har row tap → Entries (us dimension + date range)
+const SERIES = ['var(--s1)', 'var(--s2)', 'var(--s3)', 'var(--s4)', 'var(--s5)'];
+// Top 5 + "baaki sab" ka donut (sirf dikhane ke liye; rows wahi groupSum/itemStats wale)
+function topDonutCard(title, rows, label) {
+  const pos = rows.filter((r) => r.amount > 0); if (!pos.length) return '';
+  const top = pos.slice(0, 5), rest = pos.slice(5).reduce((s, r) => s + r.amount, 0);
+  const segs = top.map((r, i) => ({ label: r.key, value: r.amount, color: SERIES[i] }));
+  if (rest > 0) segs.push({ label: tr('Others', 'Baaki sab') + ' (' + (pos.length - 5) + ')', value: rest, color: 'var(--bar)' });
+  const total = segs.reduce((s, x) => s + x.value, 0);
+  return `<div class="report-card chart-card"><h4>${title}</h4><div class="donut-wrap">${donutSVG(segs, total, label)}${donutLegend(segs, total)}</div></div>`;
+}
 function reportList(title, rows, partFn, opts) {
   opts = opts || {};
   if (!rows.length) return `<div class="report-card"><h4>${title}</h4><div class="muted">${tr('Nothing in this range', 'Is range me kuch nahi')}</div></div>`;
@@ -1558,7 +1594,7 @@ function screenReports() {
         ${['all', 'month', 'lastmonth', 'custom'].map((r) => `<button type="button" class="chip sm ${(f.range || 'all') === r ? 'active' : ''}" data-r="${r}">${esc(rangeName(r))}</button>`).join('')}
       </div>
       ${f.range === 'custom' ? `<div class="row2 custom-range"><div><label class="mini-l">${tr('From', 'Kab se')}</label><input id="rf-from" type="date" value="${esc(f.from)}" /></div><div><label class="mini-l">${tr('To', 'Kab tak')}</label><input id="rf-to" type="date" value="${esc(f.to)}" /></div></div>` : ''}
-      <div class="muted tap-hint">${ic('hand-pointing')}${tr('Tap any row to see its entries', 'Kisi bhi row pe tap karo — uski entries dikhengi')}</div>
+      <div class="muted tap-hint">${ic('hand-pointing')}${tr('Tap a row for its entries', 'Row pe tap = entries')}</div>
       <div class="r-body r-${tab}">${body}</div>
       <button class="btn-secondary" id="csv-btn" style="width:100%;margin-top:6px">${ic('download-simple')}${tr('CSV / Excel export', 'CSV / Excel export')} (${esc(rl)})</button>
     </div>`;
@@ -1598,7 +1634,10 @@ function reportSummary(inR, rl) {
   const cmpW = (v) => Math.round(v / cmpMax * 1000) / 10;
   const net = totalIn - totalOut;
   const statTile = (cls, icon, label, v, part, small) => `<div class="stat-tile ${cls} tap" data-f="${esc(JSON.stringify(part))}" tabindex="0" role="button"><div class="st-k">${ic(icon)}${label}</div><div class="st-v num">${v}</div>${small ? `<div class="st-s">${small}</div>` : ''}</div>`;
+  const byCatS = groupSum('Out', (t) => t.category, inR).filter((r) => r.amount > 0).map((r) => ({ label: r.key, value: r.amount, color: CAT_COLOR[r.key] || 'var(--cat-misc)' }));
+  const catTot = byCatS.reduce((s, x) => s + x.value, 0);
   return `
+    ${byCatS.length ? `<div class="report-card chart-card lead-chart"><h4>${ic('chart-pie-slice')}${tr('Where money went', 'Kharcha kahan gaya')}</h4><div class="donut-wrap">${donutSVG(byCatS, catTot)}${donutLegend(byCatS, catTot)}</div></div>` : ''}
     <div class="report-card cmp-card">
       <h4>${ic('arrows-down-up')}${esc(rl)} — ${tr('In vs Out', 'Aaya vs Gaya')}</h4>
       <div class="stat-tiles">
@@ -1638,7 +1677,7 @@ function reportCategory(inR) {
 }
 function reportParty(inR) {
   const rows = groupSum('Out', (t) => t.vendor, inR).filter((x) => x.key !== '—');
-  return reportList(ic('storefront') + tr('Party-wise (paid to)', 'Party-wise (kise gaya)'), rows, (r) => ({ type: 'Out', party: r.key }), { bar: true, pct: true, lead: (r) => avatar(r.key, 'md') });
+  return topDonutCard(ic('chart-pie-slice') + tr('Top parties', 'Sabse zyada kise'), rows) + reportList(ic('storefront') + tr('Party-wise (paid to)', 'Party-wise (kise gaya)'), rows, (r) => ({ type: 'Out', party: r.key }), { bar: true, pct: true, lead: (r) => avatar(r.key, 'md') });
 }
 // Item report: kul qty (unit ke saath), average rate, sabse kam→zyada rate, pehla→aakhri rate (trend). Theka nahi.
 function itemStats(pred) {
@@ -1676,8 +1715,8 @@ function reportItem(inR) {
     }
     return lines.join('<br>');
   };
-  return reportList(ic('cube') + tr('Item-wise (material/labour)', 'Item-wise (material/labour)'), rows, (r) => ({ type: 'Out', item: r.key }), { sub, bar: true }) +
-    `<div class="muted" style="margin:-4px 4px 12px">${tr('Theka payments are not items — see Khata. Rate trend uses entries that have qty × rate.', 'Theka payment item nahi hai — Khata me dekho. Rate/trend sirf qty × rate wali entries se.')}</div>`;
+  return topDonutCard(ic('chart-pie-slice') + tr('Top items', 'Sabse bade items'), rows, tr('Items', 'Items')) + reportList(ic('cube') + tr('Item-wise (material/labour)', 'Item-wise (material/labour)'), rows, (r) => ({ type: 'Out', item: r.key }), { sub, bar: true }) +
+    `<div class="muted tap-hint">${ic('handshake')}${tr('Theka payments: see Khata', 'Theka payment: Khata me')}</div>`;
 }
 function reportMonth(inR) {
   const map = {};
@@ -1728,19 +1767,22 @@ function khataMatch(p, tab) {
   if (tab === 'supplier') return p.supplier;
   return true;
 }
-function khataRow(p) {
+function khataRow(p, totalPaid) {
   const tags = [];
   const both = p.udhaar > 0 && p.thekaBaaki > 0;
-  if (p.udhaar > 0) tags.push(`<span class="tag udhaar">udhaar${both ? ' ' + inr(p.udhaar) : ''}</span>`);
+  if (p.udhaar > 0) tags.push(`<span class="tag udhaar">${ic('clock')}udhaar${both ? ' ' + inr(p.udhaar) : ''}</span>`);
   for (const s of p.st) {
-    if (s.kind === 'baaki') tags.push(`<span class="tag red">${tr('theka left', 'theka baaki')}${both || p.st.length > 1 ? ' ' + inr(s.diff) : ''}</span>`);
-    else if (s.kind === 'advance') tags.push(`<span class="tag amber">advance</span>`);
-    else if (s.kind === 'done') tags.push(`<span class="tag paid">${tr('theka', 'theka')} ${tr('fully paid', 'pura')}</span>`);
-    else if (s.kind === 'ratewise') tags.push(`<span class="tag amber">${tr('rate-wise theka', 'rate-wise theka')}</span>`);
-    else tags.push(`<span class="tag amber">${tr('set theka amount', 'theka amount daalo')}</span>`);
+    if (s.kind === 'baaki') tags.push(`<span class="tag red">${ic('handshake')}${tr('theka left', 'theka baaki')}${both || p.st.length > 1 ? ' ' + inr(s.diff) : ''}</span>`);
+    else if (s.kind === 'advance') tags.push(`<span class="tag amber">${ic('ruler')}advance</span>`);
+    else if (s.kind === 'done') tags.push(`<span class="tag paid">${ic('check-circle')}${tr('theka', 'theka')} ${tr('fully paid', 'pura')}</span>`);
+    else if (s.kind === 'ratewise') tags.push(`<span class="tag amber">${ic('ruler')}${tr('rate-wise theka', 'rate-wise theka')}</span>`);
+    else tags.push(`<span class="tag amber">${ic('warning')}${tr('set theka amount', 'theka amount daalo')}</span>`);
   }
-  if (!p.contracts.length && !p.udhaar && p.settled > 0) tags.push(`<span class="tag paid">udhaar ${tr('settled', 'chuk gaya')}</span>`);
-  if (p.supplier && !tags.length) tags.push(`<span class="tag">${tr('supplier', 'supplier')}</span>`);
+  if (!p.contracts.length && !p.udhaar && p.settled > 0) tags.push(`<span class="tag paid">${ic('check-circle')}udhaar ${tr('settled', 'chuk gaya')}</span>`);
+  if (p.supplier && !tags.length) tags.push(`<span class="tag t-material">${ic('package')}${tr('supplier', 'supplier')}</span>`);
+  if (!tags.length) tags.push(`<span class="tag t-${catTone((p.ledger[0] || {}).category)}">${ic(CAT_ICON[(p.ledger[0] || {}).category] || 'receipt')}${esc((p.ledger[0] || {}).category || tr('party', 'party'))}</span>`);
+  // Bina theke wali party: kul kharche me hissa (sirf dikhane ke liye)
+  const share = totalPaid ? p.paid / totalPaid * 100 : 0, shareW = Math.round(share * 10) / 10;
   // Right side: sabse zaroori amount — dena baaki (udhaar + theka baaki, wahi Khata total wala), warna kul diya
   const due = p.udhaar + p.thekaBaaki;
   const key = due > 0
@@ -1751,9 +1793,9 @@ function khataRow(p) {
     <div class="k-main">
       <div class="k-top"><div class="k-name ud">${esc(p.name)}</div><div class="k-amt num ${key.c}">${key.v}<small>${key.l}</small></div></div>
       ${tags.length ? `<div class="k-tags">${tags.join('')}</div>` : ''}
-      ${p.contracts.map((c, i) => thekaBar(p.st[i], { cls: 'sm' })).join('')}
-      <div class="k-sub">${p.n} ${tr('entries', 'entries')}${due > 0 ? ' · ' + inr(p.paid) + ' ' + tr('paid', 'diya') : ''}${p.last ? ' · ' + esc(fmtDate(p.last)) : ''}</div></div>
-    <div class="k-arrow">${ic('caret-right')}</div></div>`;
+      ${p.contracts.length ? p.contracts.map((c, i) => thekaBar(p.st[i], { cls: 'sm' })).join('') : `<div class="tb-wrap sm"><div class="tbar share" data-share="${shareW}"><span class="tb-fill" style="width:${shareW}%"></span></div></div>`}
+      <div class="k-sub">${p.n} ${tr('entries', 'entries')}${due > 0 ? ' · ' + inr(p.paid) + ' ' + tr('paid', 'diya') : ''}${!p.contracts.length ? ' · ' + (share >= 1 ? Math.round(share) : '<1') + '% ' + tr('of spend', 'kharche ka') : ''}${p.last ? ' · ' + esc(fmtDate(p.last)) : ''}</div></div>
+    </div>`;
 }
 // Khata list ko aakhri activity ke mahine se section me baanto (order wahi rehta hai: naya pehle)
 function khataSection(last) {
@@ -1765,10 +1807,10 @@ function khataSection(last) {
   if (m === prev) return tr('Last month', 'Pichla mahina');
   return monthShort(+m.slice(5, 7) - 1) + ' ' + m.slice(0, 4);
 }
-function khataListHtml(rows) {
+function khataListHtml(rows, totalPaid) {
   const out = []; let cur = null, buf = [];
   const flush = () => { if (buf.length) out.push(`<div class="k-sec"><div class="k-sec-h"><span>${esc(cur)}</span><span class="k-sec-n">${buf.length}</span></div><div class="k-group">${buf.join('')}</div></div>`); buf = []; };
-  for (const p of rows) { const s = khataSection(p.last); if (s !== cur) { flush(); cur = s; } buf.push(khataRow(p)); }
+  for (const p of rows) { const s = khataSection(p.last); if (s !== cur) { flush(); cur = s; } buf.push(khataRow(p, totalPaid)); }
   flush();
   return out.join('');
 }
@@ -1791,13 +1833,12 @@ function screenTheka() {
         <button type="button" class="btn-secondary" id="add-theka">${ic('plus')}${tr('Theka', 'Theka')}</button></div>
       <div class="filter-chips" id="k-chips">${KHATA_TABS.map(([k, en, hi]) => `<button type="button" class="chip sm ${tab === k ? 'active' : ''}" data-k="${k}">${tr(en, hi)} <span class="cn">${ps.filter((p) => khataMatch(p, k)).length}</span></button>`).join('')}</div>
       <div class="list k-list" id="k-list"></div>
-      <p class="muted" style="margin:12px 2px 0">${tr('Theka and side-work udhaar are kept separate. Tap a party for the full ledger, payments, udhaar settle and WhatsApp hisaab.', 'Theka aur side kaam ka udhaar alag-alag. Party pe tap karo — poora ledger, payment, udhaar chukao, WhatsApp hisaab.')}</p>
     </div>`;
   const bind = () => {
     const renderList = () => {
       const q = nameKey(state.khataQ || ''), t = state.khataTab || 'all';
       const rows = ps.filter((p) => khataMatch(p, t) && (!q || p.key.includes(q)));
-      $('#k-list').innerHTML = rows.length ? khataListHtml(rows) : emptyState(tr('No party found', 'Koi party nahi mili'));
+      $('#k-list').innerHTML = rows.length ? khataListHtml(rows, ps.reduce((s, x) => s + x.paid, 0)) : emptyState(tr('No party found', 'Koi party nahi mili'));
       $('#k-list').querySelectorAll('[data-party]').forEach((el) => el.onclick = () => openParty(el.dataset.party));
     };
     $('#add-theka').onclick = () => openThekaForm();
@@ -1850,7 +1891,7 @@ function openParty(key) {
       ${(() => { const rl = parseRates(c.notes); if (!rl.length) return ''; return `<div class="section-label" style="margin-top:12px">${tr('Rate list', 'Rate list')}</div>` +
         rl.map((l) => `<div class="rrow"><div class="k"><span class="ud">${esc(l.n)}</span><small>${inr(l.r)} ${esc(RATE_UNITS[l.u] || '')}${Number(l.q) ? ' × ' + esc(l.q) : ''}</small></div><div class="v">${Number(l.q) ? inr(rateLineAmt(l)) : '<span class="muted">' + tr('pending', 'baaki') + '</span>'}</div></div>`).join('') +
         (ratesTotal(rl) ? `<div class="total-line"><span>${tr('Measured total', 'Measurement total')}</span><span>${inr(ratesTotal(rl))}</span></div>` : ''); })()}
-      ${s.kind === 'advance' ? `<div class="muted" style="margin-top:6px">${tr('Paid more than current theka amount — normal if more work/measurement is still to be added. Update the theka amount after measurement.', 'Theka amount se zyada diya — normal hai agar aur kaam/measurement abhi add hona hai. Measurement ke baad theka amount update kar dena.')}</div>` : ''}
+      ${s.kind === 'advance' ? `<div class="tk-note">${ic('ruler')}${tr('Update theka amount after measurement', 'Measurement ke baad theka amount update karo')}</div>` : ''}
       <button class="btn-secondary" data-edit-theka="${esc(c.id)}" style="width:100%;margin-top:10px">${ic('pencil-simple')}${tr('Edit theka / measurement', 'Theka / measurement edit')}</button>
     </div>`; }).join('')}
     ${pend.length || Object.keys(settledByDate).length ? `<div class="report-card">
@@ -1867,7 +1908,7 @@ function openParty(key) {
     </div>
     ${L.length ? `<div class="section-label ledger-h"><span>${ic('clock-counter-clockwise')}${tr('Full ledger (newest first)', 'Poora hisaab (naya pehle)')}</span>
       <span class="seg-toggle" id="led-tabs"><button type="button" class="on" data-l="all">${tr('All', 'Sab')}</button>${pend.length ? `<button type="button" data-l="ud">Udhaar</button>` : ''}</span></div>
-      <div class="muted" style="margin:-4px 2px 8px">∑ = ${tr('total paid up to that entry (udhaar not counted until settled)', 'us entry tak kul diya (udhaar chukne tak nahi gina)')}</div>
+      <div class="muted" style="margin:-4px 2px 8px">∑ = ${tr('paid so far (udhaar excluded)', 'ab tak kul diya (udhaar chhod ke)')}</div>
       <div class="day-card" id="party-ledger">${L.slice().reverse().map((t) => entryRow(t, { running: runMap[t.id], noAvatar: true })).join('')}</div>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Close', 'Band karo')}</button>`;
   openSheet(inner, (root) => {

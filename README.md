@@ -113,6 +113,8 @@ App **GitHub Pages** par host hai (free) — live URL:
 - **Party avatar + theka progress:** har party ka gol avatar (naam ke initials, naam se tay rang). Theka
   jahan dikhe (Khata, Home Dena baaki, party sheet) wahan diya / amount ka bar: hara = pura, accent = chal
   raha, amber hissa = advance, dhaariyaan = amount set nahi. Sirf dikhane ke liye, hisaab wahi.
+- **Home:** upar hare card me Cash haath me + 6 mahine ke kharche ki line; Dena baaki party cards (side me
+  scroll). Reports ke har tab me chart. Animations phone ki "Reduce motion" setting maante hain.
 
 ### Design / licences
 - Font: **Geist** (Vercel) — `fonts/Geist-Variable.woff2`, SIL Open Font License 1.1 (`fonts/OFL.txt`). Repo me hi hai, offline bhi chalta hai.

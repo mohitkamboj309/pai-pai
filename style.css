@@ -69,6 +69,10 @@
   --av6-bg: #f4e8e0; --av6-fg: #86492e; --av7-bg: #e8ebef; --av7-fg: #46505b;
   --track: #e9e9e5;           /* progress track */
   --radius-hero: 24px;
+  /* Home hero surface + chart series (Reports top-N donuts) */
+  --hero-bg: #0f5132; --hero-ink: #ffffff; --hero-muted: rgba(255, 255, 255, .72); --hero-shape: rgba(255, 255, 255, .07);
+  --hero-spark: #ffffff; --hero-area: rgba(255, 255, 255, .12); --hero-badge: rgba(255, 255, 255, .14);
+  --s1: #2c5d85; --s2: #23675f; --s3: #5b4b8a; --s4: #8f3f55; --s5: #46505b;
   --font: "Geist", -apple-system, "SF Pro Text", system-ui, "Segoe UI", Roboto, sans-serif;
 }
 /* Dark tokens: data-theme="dark", ya Auto + system dark */
@@ -92,6 +96,9 @@
   --av4-bg: #312a1a; --av4-fg: #e3c585; --av5-bg: #163130; --av5-fg: #88d8cd;
   --av6-bg: #35251d; --av6-fg: #eaad90; --av7-bg: #252a31; --av7-fg: #b2bcc7;
   --track: #2a2f33;
+  --hero-bg: #133a27; --hero-ink: #eef1f2; --hero-muted: rgba(238, 241, 242, .66); --hero-shape: rgba(255, 255, 255, .04);
+  --hero-spark: #3ddc84; --hero-area: rgba(61, 220, 132, .14); --hero-badge: rgba(255, 255, 255, .08);
+  --s1: #93bfe8; --s2: #88d8cd; --s3: #bcadee; --s4: #eda6ba; --s5: #b2bcc7;
   --shadow-sm: none; --shadow: none; --shadow-lg: 0 12px 40px rgba(0, 0, 0, .5);
 }
 @media (prefers-color-scheme: dark) {
@@ -115,6 +122,9 @@
     --av4-bg: #312a1a; --av4-fg: #e3c585; --av5-bg: #163130; --av5-fg: #88d8cd;
     --av6-bg: #35251d; --av6-fg: #eaad90; --av7-bg: #252a31; --av7-fg: #b2bcc7;
     --track: #2a2f33;
+    --hero-bg: #133a27; --hero-ink: #eef1f2; --hero-muted: rgba(238, 241, 242, .66); --hero-shape: rgba(255, 255, 255, .04);
+    --hero-spark: #3ddc84; --hero-area: rgba(61, 220, 132, .14); --hero-badge: rgba(255, 255, 255, .08);
+    --s1: #93bfe8; --s2: #88d8cd; --s3: #bcadee; --s4: #eda6ba; --s5: #b2bcc7;
     --shadow-sm: none; --shadow: none; --shadow-lg: 0 12px 40px rgba(0, 0, 0, .5);
   }
 }
@@ -934,3 +944,121 @@ kbd { font-family: ui-monospace, Menlo, monospace; font-size: 11px; font-weight:
 .entry .ic .av > .ctile.xs .i { width: 10.5px; height: 10.5px; }
 .av:has(> .ctile.xs) .av-t { transform: translate(-2px, -2px); }
 .entry.compact .ic .av { font-size: 12.5px; }
+
+/* ===================================================================
+   App feel: tinted hero, people row, party cards, Khata cards, charts
+   on every Reports tab, micro-motion (prefers-reduced-motion honoured).
+   =================================================================== */
+
+/* ---------- Home hero ---------- */
+.hero-card { background: none; border: none; box-shadow: none; padding: 0; overflow: visible; border-radius: 0; display: grid; gap: 8px; }
+.hero-main { position: relative; overflow: hidden; isolation: isolate; background: var(--hero-bg); color: var(--hero-ink); border-radius: var(--radius-hero); padding: 18px 20px 14px; box-shadow: var(--shadow); }
+.hero-main::before, .hero-main::after { content: ""; position: absolute; border-radius: 50%; background: var(--hero-shape); z-index: -1; pointer-events: none; }
+.hero-main::before { width: 240px; height: 240px; right: -80px; top: -110px; }
+.hero-main::after { width: 160px; height: 160px; right: -30px; top: 30px; }
+.hero-main.tap:active, .hero-main.tap:hover { background: var(--hero-bg); }
+.hero-top { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.hero-main .hero-label { color: var(--hero-muted); font-size: 13.5px; }
+.hero-badge { width: 34px; height: 34px; border-radius: 11px; background: var(--hero-badge); display: inline-flex; align-items: center; justify-content: center; }
+.hero-badge .i { width: 19px; height: 19px; }
+.hero-main .hero-amt { color: var(--hero-ink); font-size: 40px; margin-top: 2px; }
+.spark-wrap { position: relative; height: 54px; margin: 12px 0 0; }
+.spark { width: 100%; height: 100%; display: block; overflow: visible; }
+.sp-area { fill: var(--hero-area); }
+.sp-line { stroke: var(--hero-spark); stroke-width: 2.25; stroke-linecap: round; stroke-linejoin: round; stroke-dasharray: 1; stroke-dashoffset: 0; }
+.sp-dot { position: absolute; width: 9px; height: 9px; margin: -4.5px 0 0 -4.5px; border-radius: 50%; background: var(--hero-spark); box-shadow: 0 0 0 3px var(--hero-bg); }
+.spark-cap { display: flex; justify-content: space-between; gap: 8px; font-size: 11px; color: var(--hero-muted); font-weight: 550; margin-top: 6px; }
+.hero-subs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; border: none; margin: 0; padding: 0; }
+.hero-sub, .hero-sub + .hero-sub { background: var(--card); border: 1px solid var(--line); border-radius: 20px; padding: 14px; min-height: 96px; box-shadow: var(--shadow-sm); min-width: 0; }
+.hs-head { display: flex; justify-content: space-between; align-items: center; gap: 6px; min-height: 26px; }
+.mini-ring { width: 26px; height: 26px; flex: 0 0 26px; }
+.hero-sub .amt { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hero-sub.dena { background: var(--amber-soft); border-color: transparent; }
+.hero-sub .label { display: flex; align-items: center; gap: 5px; white-space: nowrap; }
+.hero-sub .label .i { width: 14px; height: 14px; color: var(--amber); }
+.hero-sub .amt { font-size: 20px; }
+.split-bar.sm { height: 6px; margin-top: 10px; gap: 2px; }
+.hs-leg { display: flex; gap: 10px; margin-top: 6px; font-size: 11px; color: var(--muted); font-weight: 550; }
+.hs-leg span { display: inline-flex; align-items: center; gap: 4px; }
+.hs-leg .lg-dot { width: 6px; height: 6px; }
+.hero-minis { gap: 8px; margin: 0; padding: 0; }
+.hero-mini { flex-direction: row; align-items: center; justify-content: flex-start; gap: 10px; background: var(--card); border: 1px solid var(--line); border-radius: 18px; padding: 10px 12px; min-height: 60px; box-shadow: var(--shadow-sm); }
+.hm-ic { width: 34px; height: 34px; flex: 0 0 34px; border-radius: 11px; background: var(--fill); color: var(--ink-2); display: inline-flex; align-items: center; justify-content: center; }
+.hm-ic .i { width: 18px; height: 18px; }
+.hm-t { display: flex; flex-direction: column; min-width: 0; }
+
+/* ---------- People row (recent parties → naya kharcha) ---------- */
+.rp-head { display: flex; align-items: center; gap: 6px; margin: 4px 4px 6px; }
+.rp-head .i { width: 14px; height: 14px; color: var(--accent); }
+.filter-chips.rp-chips { gap: 2px; margin: 0 -16px 10px; padding: 2px 16px 4px; }
+.rp-chips .chip, .rp-chips .chip:hover { flex-direction: column; justify-content: flex-start; width: 78px; min-height: 86px; padding: 4px 2px; gap: 6px; background: none; border: none; border-radius: 16px; }
+.av.xl { width: 52px; height: 52px; font-size: 17px; letter-spacing: 0; }
+.rp-n { width: 100%; font-size: 12px; font-weight: 550; line-height: 1.25; text-align: center; color: var(--ink-2); white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+
+/* ---------- Home: Dena baaki party cards (horizontal) ---------- */
+.dena-card { margin: 6px 0 16px; }
+.dena-card .card-head { padding: 0 0 8px 4px; min-height: 44px; }
+.h4-n { font-size: 12px; color: var(--faint); font-weight: 550; margin-left: 2px; }
+.pc-strip { display: flex; gap: 10px; overflow-x: auto; scroll-snap-type: x mandatory; margin: 0 -16px; padding: 2px 16px 10px; scroll-padding: 0 16px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
+.pc-strip::-webkit-scrollbar { display: none; }
+.pcard { flex: 0 0 176px; scroll-snap-align: start; display: flex; flex-direction: column; min-width: 0; background: var(--card); border: 1px solid var(--line); border-radius: 22px; padding: 14px; box-shadow: var(--shadow); cursor: pointer; }
+.pc-top { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 10px; }
+.pc-kind { width: 28px; height: 28px; border-radius: 9px; display: inline-flex; align-items: center; justify-content: center; background: var(--fill); color: var(--muted); }
+.pc-kind .i { width: 15px; height: 15px; }
+.pc-kind.udhaar, .pc-kind.adv, .pc-kind.none { background: var(--amber-soft); color: var(--amber); }
+.pc-kind.baaki { background: var(--red-soft); color: var(--red); }
+.pcard .p-name { font-weight: 600; font-size: 14.5px; letter-spacing: -0.012em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pc-amt { font-size: 22px; font-weight: 750; letter-spacing: -0.03em; line-height: 1.2; margin-top: 2px; white-space: nowrap; }
+.pc-reason { font-size: 12px; color: var(--muted); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.pcard .tb-wrap, .pc-foot { margin-top: auto; padding-top: 12px; }
+.pc-foot .tag { margin: 0; }
+.tag .i { width: 12px; height: 12px; margin-right: 4px; flex: 0 0 auto; }
+
+/* ---------- Khata: cards ---------- */
+.due-card { background: var(--red-soft); border-color: transparent; box-shadow: none; }
+.due-card .split-bar { background: var(--card); }
+.k-group { display: flex; flex-direction: column; gap: 10px; background: none; border: none; box-shadow: none; overflow: visible; border-radius: 0; }
+.k-group .krow { background: var(--card); border: 1px solid var(--line); border-radius: 20px; box-shadow: var(--shadow-sm); padding: 14px 16px; }
+.k-group .krow + .krow::before { display: none; }
+.tbar.share .tb-fill { background: var(--ink-2); opacity: .4; border-radius: 999px; }
+.k-tags .tag { padding: 3px 9px 3px 7px; }
+
+/* ---------- Party sheet ---------- */
+.tk-note { display: flex; align-items: center; gap: 8px; background: var(--amber-soft); color: var(--ink-2); border-radius: 12px; padding: 9px 12px; font-size: 12.5px; font-weight: 550; margin-top: 12px; }
+.tk-note .i { width: 16px; height: 16px; color: var(--amber); }
+
+/* ---------- Responsive ---------- */
+@media (min-width: 768px) {
+  .hero-card { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); gap: 10px; }
+  .hero-main { grid-row: span 2; padding: 22px 24px 16px; display: flex; flex-direction: column; justify-content: space-between; }
+  .hero-main .hero-amt { font-size: 44px; }
+  .hero-subs { border-left: none; margin: 0; padding: 0; gap: 10px; }
+  .hero-minis { padding: 0; margin: 0; gap: 10px; }
+  .filter-chips.rp-chips { margin: 0 0 10px; padding: 2px 0 4px; }
+  .dash-grid > .dena-card { grid-column: 1 / -1; margin: 0; }
+  .pc-strip { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); margin: 0; padding: 2px 0 2px; overflow: visible; }
+  .k-group { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+}
+@media (min-width: 1100px) { .k-group { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+/* ---------- Motion ---------- */
+@keyframes growX { from { transform: scaleX(0); } }
+@keyframes growY { from { transform: scaleY(0); } }
+@keyframes rise { from { opacity: 0; transform: translateY(6px); } }
+@keyframes fadeIn2 { from { opacity: 0; } }
+@keyframes ringIn { from { opacity: 0; transform: rotate(-40deg) scale(.94); } }
+@keyframes draw { from { stroke-dashoffset: 1; } }
+.tb-fill, .tb-over, .bar > span, .cmp-fill, .split-bar > span { transform-origin: left center; animation: growX .75s cubic-bezier(.22, .61, .36, 1) both; }
+.mc-bar { transform-origin: bottom center; animation: growY .7s cubic-bezier(.22, .61, .36, 1) both; }
+.donut, .mini-ring { animation: ringIn .7s cubic-bezier(.22, .61, .36, 1) both; }
+.hero-amt, .due-v, .tk-big b, .pc-amt { animation: rise .45s ease both; }
+.sp-line { animation: draw 1s ease .1s both; }
+.sp-dot { animation: fadeIn2 .3s ease .8s both; }
+.screen { animation: fadeIn2 .2s ease both; }
+.hero-main, .hero-sub, .hero-mini, .krow, .pcard, .stat-tile, .due-card, .rp-chips .chip, .link-card { transition: transform .14s ease, background-color .15s ease, border-color .15s ease; }
+.hero-main:active, .hero-sub:active, .hero-mini:active, .krow:active, .pcard:active, .stat-tile:active, .due-card:active, .rp-chips .chip:active, .link-card:active { transform: scale(.975); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-delay: 0s !important; }
+  .hero-main:active, .hero-sub:active, .hero-mini:active, .krow:active, .pcard:active, .stat-tile:active, .due-card:active, .rp-chips .chip:active, .link-card:active { transform: none; }
+}
+.tag[class*=" t-"] { background: var(--tile-soft); color: var(--tile); }
