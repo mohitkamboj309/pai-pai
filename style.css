@@ -305,6 +305,7 @@ body.kb-open .bottom-nav { transform: translateY(150%); }
   transform: translateX(-50%) translateY(8px); background: #0f1a14; color: #fff; padding: 13px 20px;
   border-radius: 14px; font-size: 14px; font-weight: 500; z-index: 80; box-shadow: 0 10px 30px rgba(0,0,0,.3);
   max-width: 90%; text-align: center; opacity: 0; transition: opacity .22s, transform .22s;
+  pointer-events: none;   /* chhupa toast neeche ke buttons ka tap na roke */
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(-4px); }
 .toast.err { background: var(--red); }
@@ -315,3 +316,23 @@ body.kb-open .bottom-nav { transform: translateY(150%); }
 .full-loader { padding: 64px 0; text-align: center; color: var(--muted); }
 .spinner { width: 32px; height: 32px; border: 3px solid var(--line); border-top-color: var(--green); border-radius: 50%; margin: 0 auto 14px; animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* ---------- Home: compact actions, aaj ki labour, sub-notes ---------- */
+.actions.compact { grid-template-columns: 1fr 1fr; margin: 0 0 12px; }
+.actions.compact .action-btn { min-height: 0; padding: 11px 10px; flex-direction: row; font-size: 14px; gap: 8px; }
+.actions.compact .action-btn .ico { font-size: 18px; }
+.actions.compact .action-btn.out { min-height: 64px; font-size: 17px; }
+.actions.compact .action-btn.out .ico { font-size: 24px; }
+.ql-card .chip.active { background: var(--green); color: #fff; border-color: var(--green); }
+.ql-foot { display: flex; gap: 8px; margin-top: 10px; }
+.ql-foot input { flex: 1; padding: 10px 12px; border: 1.5px solid var(--line); border-radius: 12px; background: #fff; }
+.ql-foot button:disabled { opacity: .5; }
+.sub-note { font-size: 11.5px; color: var(--muted); font-weight: 600; margin-top: 3px; }
+.rrow.tap, .report-card.tap { cursor: pointer; }
+.rrow.tap:active, .report-card.tap:active { background: #f6f8f7; }
+/* ---------- Cleanup ---------- */
+.cl-item { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-bottom: 1px solid #f0f3f1; font-size: 14px; text-transform: none; }
+.cl-item:last-child { border-bottom: none; }
+.cl-item input { width: 20px; height: 20px; margin-top: 2px; flex: 0 0 auto; }
+.cl-item details summary { margin-top: 4px; cursor: pointer; }
+.cl-row { font-size: 12.5px; padding: 5px 0; border-top: 1px dashed #e9edf0; }
