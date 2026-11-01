@@ -8,14 +8,20 @@
 
   <!-- PWA / iOS home-screen -->
   <link rel="manifest" href="manifest.json" />
-  <meta name="theme-color" content="#0f5132" />
+  <meta name="theme-color" content="#f7f7f5" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0d0f10" media="(prefers-color-scheme: dark)" />
+  <meta name="color-scheme" content="light dark" />
   <meta name="mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
   <meta name="apple-mobile-web-app-title" content="Pai-Pai" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <link rel="icon" type="image/png" href="icons/icon-192.png" />
 
+  <!-- Theme pehle hi laga do (Auto/Light/Dark, Settings se) taaki load par flash na ho -->
+  <script>try{var t=localStorage.getItem('gk_theme');document.documentElement.setAttribute('data-theme',t==='light'||t==='dark'?t:'auto');}catch(e){}</script>
+  <!-- Geist (SIL OFL 1.1, fonts/OFL.txt) — repo me hi, offline bhi chalta hai -->
+  <link rel="preload" href="fonts/Geist-Variable.woff2" as="font" type="font/woff2" crossorigin />
   <link rel="stylesheet" href="style.css" />
 
   <!-- Supabase client — repo me hi rakha hai (pinned v2.118.0) taaki offline cold-start pe bhi load ho
