@@ -82,8 +82,12 @@ const state = {
   view: 'dashboard',
   authStep: 'config',
   authEmail: '',
-  filterRange: 'all'   // all | month | lastmonth
+  f: null,              // global filter (blankFilter) — Entries + Reports date range + tap-to-filter
+  reportTab: 'summary', // summary | category | party | item | month
+  khataTab: 'all', khataQ: '',
+  entriesFrom: null     // kis tab se tap karke Entries aaye ("‹ Wapas" ke liye)
 };
+state.f = blankFilter();
 
 /* --------------------------- DOM helpers -------------------------- */
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -111,10 +115,10 @@ function num(v) {
   return isNaN(n) ? NaN : n;
 }
 
-/* ---- Naam (vendor/item) ek jaisa rakhna: "Tinku biana" = "Tinku Biana" ---- */
+/* ---- Naam (vendor/item) ek jaisa rakhna: "Ram ji" = "Ram Ji" ---- */
 // Comparison key: chhote akshar, sirf a-z/0-9/Hindi, space hata ke
 function nameKey(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9ऀ-ॿ]+/g, ''); }
-// Har shabd bade akshar se? ("Tinku Biana" haan, "Tinku biana" nahi)
+// Har shabd bade akshar se? ("Ram Ji" haan, "Ram ji" nahi)
 function titledName(x) { return String(x).split(/\s+/).every((w) => !/^[a-z]/.test(w)); }
 // Kisi field ke saare naam data se: key → Title Case wali spelling, warna sabse zyada use hui
 function spellingMap(values) {
@@ -430,26 +434,23 @@ function spentByType(type) { const ids = state.accounts.filter((a) => a.type ===
 // Ledger order: date (naya pehle), fir created_at. (loadAll ki server .order() bhi isi se match honi chahiye.)
 function sortTxns() { state.transactions.sort((a, b) => (b.date || '').localeCompare(a.date || '') || (b.created_at || '').localeCompare(a.created_at || '')); }
 
-function inRange(iso) {
-  if (state.filterRange === 'all') return true;
-  const d = new Date(iso + 'T00:00:00'); const now = new Date();
-  let y = now.getFullYear(), m = now.getMonth();
-  if (state.filterRange === 'lastmonth') { m -= 1; if (m < 0) { m = 11; y -= 1; } }
-  return d.getFullYear() === y && d.getMonth() === m;
-}
+// Global filter ki date range (Sab / Is mahina / Pichla / Custom)
+function inRange(iso) { return inDates(iso, state.f); }
 function thisMonth(iso) { const d = new Date(iso + 'T00:00:00'); const n = new Date(); return d.getFullYear() === n.getFullYear() && d.getMonth() === n.getMonth(); }
 
 function sumOut(filterFn) {
   return state.transactions.filter((t) => t.type === 'Out' && (!filterFn || filterFn(t)))
     .reduce((s, t) => s + (Number(t.amount) || 0), 0);
 }
-// Naam ko chhote/bade akshar ya space ke fark se alag-alag mat gino ("Tinku biana" + "Tinku Biana" = ek row).
+// Naam ko chhote/bade akshar ya space ke fark se alag-alag mat gino ("Ram ji" + "Ram Ji" = ek row).
 // Row ka naam = sabse zyada use hui spelling. Data nahi badalta, sirf report me jodta hai.
+// rangeFilter: function(t) → shamil karo? (ya true = global date range)
 function groupSum(type, keyFn, rangeFilter) {
   const map = {}, labels = {};
   for (const t of state.transactions) {
     if (t.type !== type) continue;
-    if (rangeFilter && !inRange(t.date)) continue;
+    if (typeof rangeFilter === 'function') { if (!rangeFilter(t)) continue; }
+    else if (rangeFilter && !inRange(t.date)) continue;
     const raw = (keyFn(t) || '').toString().trim() || '—';
     const k = nameKey(raw) || raw;
     (labels[k] = labels[k] || {})[raw] = (labels[k][raw] || 0) + 1;
@@ -500,7 +501,7 @@ function parties() {
   for (const c of state.contracts) { const p = get(c.thekedar_name || c.kaam); if (p) p.contracts.push(c); }
   for (const t of state.transactions) {
     if (t.type !== 'Out' || !t.vendor) continue;
-    const p = map[nameKey(t.vendor)] || ((t.payment_mode === 'Udhaar' || paidOn(t.notes)) ? get(t.vendor) : null);
+    const p = get(t.vendor);   // har vendor ki khata (supplier bhi) — sirf dikhane ke liye
     if (!p) continue;
     const a = Number(t.amount) || 0;
     if (t.payment_mode === 'Udhaar') { p.udhaar += a; p.udhaarN++; } else p.paidTotal += a;
@@ -531,6 +532,246 @@ async function settleUdhaar(list, amount, accId, mode, payDate) {
   return n;
 }
 
+/* ===================== Global filter (Entries + Reports + Khata) ===================== */
+// Ek hi filter object — Entries list, Reports ki date range aur har tap-to-filter isi ko use karte hain.
+// Sirf dikhane/chhantne ka kaam: data kabhi nahi badalta.
+function blankFilter() { return { q: '', party: '', category: '', item: '', mode: '', account: '', type: 'all', range: 'all', from: '', to: '', includePersonal: true }; }
+const FILTER_KEYS = Object.keys(blankFilter());
+function cleanFilter(part) { const out = {}; for (const k of FILTER_KEYS) if (part && part[k] !== undefined && part[k] !== null) out[k] = part[k]; return out; }
+function isoDate(d) { const p = (x) => String(x).padStart(2, '0'); return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate()); }
+function yesterday() { const d = new Date(); d.setDate(d.getDate() - 1); return isoDate(d); }
+function monthBounds(y, m) { return { from: isoDate(new Date(y, m, 1)), to: isoDate(new Date(y, m + 1, 0)) }; }
+function rangeBounds(f) {
+  const n = new Date();
+  if (f.range === 'month') return monthBounds(n.getFullYear(), n.getMonth());
+  if (f.range === 'lastmonth') return monthBounds(n.getFullYear(), n.getMonth() - 1);
+  if (f.range === 'custom') return { from: f.from || '', to: f.to || '' };
+  return { from: '', to: '' };
+}
+function inDates(iso, f) {
+  const b = rangeBounds(f || {}); const d = iso || '';
+  if (b.from && d < b.from) return false;
+  if (b.to && d > b.to) return false;
+  return true;
+}
+const WEEKDAYS = { en: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'], hi: ['Ravi', 'Som', 'Mangal', 'Budh', 'Guru', 'Shukr', 'Shani'] };
+function weekday(iso) { const d = new Date(iso + 'T00:00:00'); return isNaN(d) ? '' : WEEKDAYS[lang === 'hi' ? 'hi' : 'en'][d.getDay()]; }
+// Entries ke din wale header: "Aaj · 1 Nov", "Shukr, 17 Oct" (saal sirf tab jab is saal ka na ho)
+function dayLabel(iso) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.split('-'); const md = parseInt(d, 10) + ' ' + monthShort(parseInt(m, 10) - 1) + (String(new Date().getFullYear()) === y ? '' : ' ' + y);
+  if (iso === today()) return tr('Today', 'Aaj') + ' · ' + md;
+  if (iso === yesterday()) return tr('Yesterday', 'Kal') + ' · ' + md;
+  return weekday(iso) + ', ' + md;
+}
+function contractById(id) { return id ? state.contracts.find((c) => c.id === id) : null; }
+// Party match: vendor / kisse aaya / (theka payment ho to) theke ka thekedar — naam case/space se fark nahi padta
+function txPartyMatch(t, k) {
+  if (!k) return true;
+  if (nameKey(t.vendor) === k || nameKey(t.from_party) === k) return true;
+  if (t.category === 'Theka Payment' && t.contract_id) { const c = contractById(t.contract_id); if (c && nameKey(c.thekedar_name || c.kaam) === k) return true; }
+  return false;
+}
+const MONTH_RE = /\b(january|february|march|april|june|july|august|september|sept|october|november|december)\b/g;
+function normQ(q) { return String(q || '').toLowerCase().replace(MONTH_RE, (m) => m.slice(0, 3)).replace(/\s+/g, ' ').trim(); }
+function qAmount(s) { const x = String(s).replace(/[₹,\s]/g, '').replace(/^rs\.?/, ''); return /^\d+(\.\d+)?$/.test(x) ? Number(x) : null; }
+function escRe(s) { return String(s).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
+function searchHay(t) {
+  const c = contractById(t.contract_id);
+  return ' ' + [t.item, t.vendor, cleanNote(t.notes), t.source, t.from_party, t.category, t.payment_mode, c && c.thekedar_name, t.type === 'Transfer' ? 'transfer' : '', fmtDate(t.date)]
+    .filter(Boolean).join(' ').toLowerCase().replace(/\s+/g, ' ') + ' ';
+}
+// Search: item/party/note/source/category/mode, amount ("17000", "17,000", "₹17000"), date/month ("oct", "1 nov")
+function matchesQ(t, raw) {
+  const q = normQ(raw); if (!q) return true;
+  const whole = qAmount(q);
+  if (whole != null && money(t.amount) === money(whole)) return true;
+  const hay = searchHay(t);
+  if (hay.includes(' ' + q)) return true;
+  return q.split(' ').every((tok) => {
+    const n = qAmount(tok);
+    if (n != null) {
+      if (money(t.amount) === money(n)) return true;
+      return new RegExp('(^|[^0-9])' + escRe(tok.replace(/[₹,]/g, '')) + '([^0-9]|$)').test(hay);
+    }
+    return hay.includes(tok);
+  });
+}
+function matchesFilter(t, f, skip) {
+  f = f || state.f; const sk = skip || {};
+  if (!sk.type && f.type && f.type !== 'all' && t.type !== f.type) return false;
+  if (!sk.dates && !inDates(t.date, f)) return false;
+  if (f.includePersonal === false && NON_BUILD_CATS.includes(t.category)) return false;
+  if (f.party && !txPartyMatch(t, nameKey(f.party))) return false;
+  if (f.category && nameKey(t.category) !== nameKey(f.category)) return false;
+  if (f.item && nameKey(t.item) !== nameKey(f.item)) return false;
+  if (f.mode && t.payment_mode !== f.mode) return false;
+  if (f.account && t.account_id !== f.account && t.to_account_id !== f.account) return false;
+  if (!sk.q && f.q && !matchesQ(t, f.q)) return false;
+  return true;
+}
+function filteredTx(f, skip) { return state.transactions.filter((t) => matchesFilter(t, f, skip)); }
+function rangeName(r) { return { all: tr('All', 'Sab'), month: tr('This month', 'Is mahina'), lastmonth: tr('Last month', 'Pichla'), custom: tr('Custom', 'Custom') }[r] || r; }
+function rangeText(f) {
+  if (!f || f.range === 'all' || !f.range) return '';
+  if (f.range === 'month') return tr('This month', 'Is mahina');
+  if (f.range === 'lastmonth') return tr('Last month', 'Pichla mahina');
+  const a = f.from || '', b = f.to || '';
+  if (a && b && a.slice(0, 7) === b.slice(0, 7)) {
+    const mb = monthBounds(+a.slice(0, 4), +a.slice(5, 7) - 1);
+    if (mb.from === a && mb.to === b) return monthShort(+a.slice(5, 7) - 1) + ' ' + a.slice(0, 4);
+  }
+  if (!a && !b) return tr('Custom dates', 'Custom date');
+  return (a ? fmtDate(a) : '…') + ' – ' + (b ? fmtDate(b) : '…');
+}
+function typeName(ty) { return ({ all: tr('All', 'Sab'), Out: tr('Expense', 'Kharcha'), In: tr('In', 'Aaya'), Transfer: tr('Transfer', 'Transfer') })[ty] || ty; }
+// Active filter ke chips ("Ram Mistry ✕") — type chips alag dikhte hain isliye yahan nahi
+function activeFilterChips(f) {
+  const out = [];
+  if (f.range && f.range !== 'all') out.push({ k: 'range', label: '📅 ' + rangeText(f) });
+  if (f.party) out.push({ k: 'party', label: f.party });
+  if (f.category) out.push({ k: 'category', label: f.category });
+  if (f.item) out.push({ k: 'item', label: f.item });
+  if (f.mode) out.push({ k: 'mode', label: f.mode });
+  if (f.account) out.push({ k: 'account', label: accName(f.account) });
+  if (f.includePersonal === false) out.push({ k: 'includePersonal', label: tr('Without Personal', 'Personal ke bina') });
+  if (f.q) out.push({ k: 'q', label: '🔍 "' + f.q + '"' });
+  return out;
+}
+function filterCount(f) { return activeFilterChips(f).filter((c) => c.k !== 'q').length + (f.type && f.type !== 'all' ? 1 : 0); }
+function filterActive(f) { return filterCount(f) > 0 || !!(f.q && f.q.trim()); }
+function clearFilterKey(f, k) {
+  const b = blankFilter();
+  if (k === 'range') { f.range = 'all'; f.from = ''; f.to = ''; } else f[k] = b[k];
+}
+function filterJson(f) { return JSON.stringify(cleanFilter(Object.assign(blankFilter(), f))); }
+function rowsTotals(rows) {
+  const s = { out: 0, inn: 0, ud: 0 };
+  for (const t of rows) { const a = Number(t.amount) || 0; if (t.type === 'Out') { s.out += a; if (t.payment_mode === 'Udhaar') s.ud += a; } else if (t.type === 'In') s.inn += a; }
+  return s;
+}
+// Kisi aur screen se tap → Entries is filter ke saath. refine = Entries ke andar hi (baaki filter rehte hain).
+function openEntriesWith(part, opts) {
+  opts = opts || {};
+  let f;
+  if (opts.refine) f = Object.assign({}, state.f, cleanFilter(part));
+  else {
+    f = blankFilter();
+    if (opts.keepDates) { f.range = state.f.range; f.from = state.f.from; f.to = state.f.to; }
+    Object.assign(f, cleanFilter(part));
+  }
+  state.f = f; efLimit = EF_PAGE;
+  if (state.view !== 'entries') state.entriesFrom = state.view;
+  scrollPos.entries = 0;
+  if (state.view === 'entries') renderScreen(0); else show('entries', { top: true });
+}
+
+/* ---- Saved views (filter ko naam se save — sirf is phone pe, localStorage gk_views) ---- */
+function savedViews() { try { const a = JSON.parse(localStorage.getItem('gk_views') || '[]'); return Array.isArray(a) ? a.filter((v) => v && v.name && v.f) : []; } catch (_) { return []; } }
+function setSavedViews(a) { try { localStorage.setItem('gk_views', JSON.stringify(a)); } catch (_) { } }
+function defaultViewName(f) {
+  const bits = activeFilterChips(f).filter((c) => c.k !== 'q').map((c) => c.label.replace(/^📅 /, ''));
+  if (f.type && f.type !== 'all') bits.unshift(typeName(f.type));
+  if (f.q) bits.push('"' + f.q + '"');
+  return bits.join(' · ').slice(0, 40) || tr('My view', 'Mera view');
+}
+function openSaveView() {
+  const f = Object.assign({}, state.f);
+  const inner = `
+    <h3>⭐ ${tr('Save this view', 'Ye view save karo')}</h3>
+    <p class="muted" style="margin:0 2px 8px">${tr('Saves the current filter with a name, shown at the top of Entries. Saved on this phone only.', 'Abhi wala filter ek naam se save hoga — Entries me upar chip ban ke dikhega. Sirf is phone pe save hota hai.')}</p>
+    <div class="field"><label>${tr('Name', 'Naam')}</label><input id="sv-name" value="${esc(defaultViewName(f))}" maxlength="40" autocomplete="off" /></div>
+    <div class="active-chips">${activeFilterChips(f).map((c) => `<span class="chip sm static ud">${esc(c.label)}</span>`).join('')}${f.type !== 'all' ? `<span class="chip sm static">${esc(typeName(f.type))}</span>` : ''}</div>
+    <button class="btn-primary" id="sv-save">⭐ ${tr('Save view', 'View save karo')}</button>
+    <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
+  openSheet(inner, (root) => {
+    root.querySelector('#cancel').onclick = closeSheet;
+    root.querySelector('#sv-save').onclick = () => {
+      const name = root.querySelector('#sv-name').value.trim();
+      if (!name) return toast(tr('Enter a name', 'Naam daalo'), true);
+      const views = savedViews().filter((v) => v.name.toLowerCase() !== name.toLowerCase());
+      views.push({ name, f: cleanFilter(f) }); setSavedViews(views);
+      closeSheet(); renderScreen(); toast(tr('View saved ⭐', 'View save ho gaya ⭐'));
+    };
+  });
+}
+function deleteSavedView(i) {
+  const views = savedViews(); const v = views[i]; if (!v) return;
+  if (!confirm(tr('Delete saved view "' + v.name + '"? (Entries are not affected)', '"' + v.name + '" view hata dein? (Entries pe koi asar nahi)'))) return;
+  views.splice(i, 1); setSavedViews(views); renderScreen(); toast(tr('View deleted', 'View hata diya'));
+}
+
+/* ---- Navigation: back button sheet band kare / pichla tab, Entries ka scroll yaad ---- */
+const scrollPos = {};
+const VIEW_NAMES = () => ({ dashboard: tr('Home', 'Home'), entries: tr('Entries', 'Entries'), reports: tr('Reports', 'Reports'), theka: tr('Khata', 'Khata'), settings: tr('Settings', 'Settings') });
+let historyBound = false;
+function bindHistory() {
+  try { history.replaceState({ v: state.view }, ''); } catch (_) { }
+  if (historyBound) return; historyBound = true;
+  window.addEventListener('popstate', (e) => {
+    if (!document.querySelector('.bottom-nav')) return;
+    if (modalRoot() && modalRoot().children.length) { closeSheet(); try { history.pushState({ v: state.view }, ''); } catch (_) { } return; }
+    const v = e.state && e.state.v;
+    if (v && v !== state.view) show(v, { fromPop: true, restore: true });
+  });
+}
+
+/* ---- Party helpers (Kharcha form ke smart defaults + Khata) ---- */
+// Party ki pichli entries se: sabse zyada wali category, har category ka aakhri item, aakhri mode, theke
+function partyProfile(name) {
+  const k = nameKey(name); if (!k) return null;
+  const rows = state.transactions.filter((t) => t.type === 'Out' && nameKey(t.vendor) === k);   // date-desc
+  const contracts = state.contracts.filter((c) => nameKey(c.thekedar_name || c.kaam) === k);
+  if (!rows.length && !contracts.length) return null;
+  const cc = {}, firstIdx = {};
+  rows.forEach((t, i) => { if (!t.category) return; cc[t.category] = (cc[t.category] || 0) + 1; if (firstIdx[t.category] == null) firstIdx[t.category] = i; });
+  const topCat = Object.keys(cc).sort((a, b) => cc[b] - cc[a] || firstIdx[a] - firstIdx[b])[0] || null;
+  const im = itemMap(), lastItemByCat = {};
+  for (const t of rows) if (t.category && t.item && !lastItemByCat[t.category]) lastItemByCat[t.category] = canonName(t.item, im);
+  return { key: k, name: canonName(name, vendorMap()), topCat, lastItemByCat, lastMode: rows.length ? rows[0].payment_mode : null, contracts, n: rows.length };
+}
+function pickContract(cs) { return cs.find((c) => thekaStatus(c).kind !== 'done') || cs[0] || null; }
+function thekaShortStatus(s) {
+  if (s.kind === 'baaki') return tr('left ', 'baaki ') + inr(s.diff);
+  if (s.kind === 'advance') return tr('advance ', 'advance ') + inr(s.diff);
+  if (s.kind === 'done') return tr('fully paid', 'pura ho gaya');
+  if (s.kind === 'ratewise') return tr('rate-wise · paid ', 'rate-wise · diya ') + inr(s.paid);
+  return tr('paid ', 'diya ') + inr(s.paid);
+}
+// Party ka poora ledger: vendor naam se + theke se linked theka payments (vendor kuch bhi likha ho)
+function partyLedger(p) {
+  const ids = new Set(p.contracts.map((c) => c.id));
+  return state.transactions.filter((t) => t.type === 'Out' && (nameKey(t.vendor) === p.key || (t.category === 'Theka Payment' && t.contract_id && ids.has(t.contract_id))));
+}
+// Home "Recent party" chips: date ke hisaab se aakhri 6 party
+function recentParties(n) {
+  const vm = vendorMap(), seen = new Set(), out = [];
+  for (const t of state.transactions) {
+    if (t.type !== 'Out' || !t.vendor) continue;
+    const k = nameKey(t.vendor); if (!k || seen.has(k)) continue;
+    seen.add(k); out.push(canonName(t.vendor, vm)); if (out.length >= n) break;
+  }
+  return out;
+}
+
+/* ---- Date field with quick chips (Aaj / Kal) — har form me date dikhe (37% entries purani date ki) ---- */
+function dateFieldHtml(id, val) {
+  return `<div class="field"><label>${tr('Date', 'Date')}</label><div class="date-row"><input id="${id}" type="date" value="${esc(val || today())}" />
+    <div class="chips date-chips" data-date-for="${id}"><button type="button" class="chip sm" data-d="0">${tr('Today', 'Aaj')}</button><button type="button" class="chip sm" data-d="1">${tr('Yesterday', 'Kal')}</button></div></div>
+    <div class="date-hint" id="${id}-hint"></div></div>`;
+}
+function bindDateField(root, id) {
+  const el = root.querySelector('#' + id), wrap = root.querySelector(`[data-date-for="${id}"]`), hint = root.querySelector('#' + id + '-hint');
+  if (!el || !wrap) return;
+  const paint = () => {
+    const v = el.value;
+    wrap.querySelectorAll('.chip').forEach((c) => c.classList.toggle('active', v === (c.dataset.d === '0' ? today() : yesterday())));
+    if (hint) hint.textContent = v && v !== today() && v !== yesterday() ? '📅 ' + weekday(v) + ', ' + fmtDate(v) + ' — ' + tr('earlier date', 'purani date') : '';
+  };
+  wrap.querySelectorAll('.chip').forEach((c) => c.onclick = () => { el.value = c.dataset.d === '0' ? today() : yesterday(); paint(); });
+  el.addEventListener('change', paint); el.addEventListener('input', paint); paint();
+}
+
 /* ============================ UI: SHELL =========================== */
 function refresh() { renderHeader(); renderScreen(); }
 
@@ -548,12 +789,25 @@ function buildShell() {
     </header>
     <main id="screen"></main>
     <nav class="bottom-nav" id="nav"></nav>
+    <aside class="side-nav" id="side-nav" aria-label="${esc(tr('Main menu', 'Menu'))}"></aside>
   `;
   $('#nav').innerHTML = [
     ['dashboard', '🏠', tr('Home', 'Home')], ['entries', '📒', tr('Entries', 'Entries')], ['reports', '📊', tr('Reports', 'Reports')],
-    ['theka', '📒', tr('Khata', 'Khata')], ['settings', '⚙️', tr('Settings', 'Settings')]
+    ['theka', '👥', tr('Khata', 'Khata')], ['settings', '⚙️', tr('Settings', 'Settings')]
   ].map(([v, i, l]) => `<button class="nav-item" data-view="${v}"><span class="ico">${i}</span>${l}</button>`).join('');
-  $('#nav').addEventListener('click', (e) => { const b = e.target.closest('.nav-item'); if (b) show(b.dataset.view); });
+  $('#nav').addEventListener('click', (e) => { const b = e.target.closest('.nav-item'); if (b) { if (b.dataset.view === 'entries') state.entriesFrom = null; show(b.dataset.view); } });
+  // Laptop/desktop (>=1100px): left sidebar — wahi 5 tab + naya kharcha (CSS hi decide karta hai kaunsa nav dikhe)
+  $('#side-nav').innerHTML = `<div class="side-brand"><img src="icons/icon-192.png" alt="" /><b>Pai-Pai</b></div>
+    <button type="button" class="side-new" id="side-new">💸 ${tr('New expense', 'Naya kharcha')} <kbd>N</kbd></button>` + [
+    ['dashboard', '🏠', tr('Home', 'Home')], ['entries', '📒', tr('Entries', 'Entries')], ['reports', '📊', tr('Reports', 'Reports')],
+    ['theka', '👥', tr('Khata', 'Khata')], ['settings', '⚙️', tr('Settings', 'Settings')]
+  ].map(([v, i, l]) => `<button type="button" class="side-item" data-view="${v}"><span class="ico">${i}</span><span>${l}</span></button>`).join('') +
+    `<div class="side-help">${tr('Shortcuts', 'Shortcuts')}: <kbd>N</kbd> ${tr('new expense', 'naya kharcha')} · <kbd>/</kbd> ${tr('search', 'search')} · <kbd>Esc</kbd> ${tr('close', 'band')}</div>`;
+  $('#side-nav').addEventListener('click', (e) => { const b = e.target.closest('.side-item'); if (b) { if (b.dataset.view === 'entries') state.entriesFrom = null; show(b.dataset.view); } });
+  $('#side-new').onclick = () => openOutForm();
+  // Sticky din-headers app-header ke neeche chipkein
+  const setHdr = () => { const h = document.querySelector('.app-header'); if (h) document.documentElement.style.setProperty('--hdr-h', h.offsetHeight + 'px'); };
+  setHdr(); if (!window.__ppHdr) { window.__ppHdr = true; window.addEventListener('resize', setHdr); }
 }
 
 function renderHeader() {
@@ -573,9 +827,23 @@ function renderHeader() {
   if (eb) eb.onclick = openActivityLog;
 }
 
-function show(view) { state.view = view; renderScreen(); }
-function renderScreen() {
-  const navs = document.querySelectorAll('.nav-item');
+// opts: fromPop (back button), restore (pichla scroll wapas), top (upar se)
+// Entries pe lautne par scroll + filter wahi rehta hai.
+function show(view, opts) {
+  opts = opts || {};
+  const prev = state.view;
+  if (prev !== view && document.getElementById('screen')) scrollPos[prev] = window.scrollY;
+  state.view = view;
+  if (!opts.fromPop && prev !== view) { try { history.pushState({ v: view }, ''); } catch (_) { } }
+  let y = 0;
+  if (prev === view) y = view === 'entries' ? window.scrollY : 0;
+  else if (opts.restore || (view === 'entries' && !opts.top)) y = scrollPos[view] || 0;
+  renderScreen(y);
+}
+// scrollY diya ho to wahan; warna (refresh) jahan the wahin rehna
+function renderScreen(scrollY) {
+  const keepY = window.scrollY;
+  const navs = document.querySelectorAll('.nav-item, .side-item');
   navs.forEach((n) => n.classList.toggle('active', n.dataset.view === state.view));
   const screen = $('#screen'); if (!screen) return;
   let r;
@@ -585,7 +853,7 @@ function renderScreen() {
   else if (state.view === 'theka') r = screenTheka();
   else r = screenSettings();
   screen.innerHTML = r.html; if (r.bind) r.bind();
-  screen.scrollTop = 0;
+  try { window.scrollTo(0, scrollY != null ? scrollY : keepY); } catch (_) { }
 }
 
 /* ====================== Charts (SVG, no deps) ===================== */
@@ -719,6 +987,8 @@ function screenDashboard() {
   const hasMonthData = months.some((m) => m.value > 0);
   const dena = denaBaakiRows();
   const ql = quickLabourSource();
+  const rp = recentParties(6);
+  const cashAcc = state.accounts.find((a) => a.type === 'Cash'), bankAcc = state.accounts.find((a) => a.type === 'Bank');
 
   const html = `
     <div class="screen">
@@ -728,6 +998,9 @@ function screenDashboard() {
         <button class="action-btn transfer" data-act="transfer"><span class="ico">🔁</span>${tr('Transfer', 'Transfer')}</button>
       </div>
 
+      ${rp.length ? `<div class="rp-head">${tr('Recent parties — tap for new expense', 'Recent party — tap = naya kharcha')}</div>
+      <div class="filter-chips rp-chips" id="rp-chips">${rp.map((n) => `<button type="button" class="chip sm ud" data-v="${esc(n)}">➕ ${esc(n)}</button>`).join('')}</div>` : ''}
+
       ${ql ? `<div class="report-card ql-card">
         <h4>👷 ${tr('Today\'s labour', 'Aaj ki labour')} — ${esc(ql.vendor)}</h4>
         <div class="muted" style="margin:-6px 0 8px">${tr('Tap once = 1 day, twice = ½ day, again = off', '1 tap = 1 din, 2 tap = ½ din, 3 tap = hatao')} · ${esc(ql.mode)}</div>
@@ -735,21 +1008,25 @@ function screenDashboard() {
         <div class="ql-foot"><input id="ql-date" type="date" value="${today()}" /><button class="btn-secondary" id="ql-save" disabled>${tr('Save', 'Save')}</button></div>
       </div>` : ''}
 
+      <div class="dash-cards">
       <div class="balance-row">
-        <div class="bal-card cash"><div class="label">💵 ${cashTracked ? tr('Cash in hand', 'Cash haath me') : tr('Cash spent', 'Cash se gaya')}</div><div class="amt">${inr(cashVal)}</div></div>
-        <div class="bal-card bank"><div class="label">🏦 ${bankTracked ? tr('In bank', 'Bank me') : tr('Bank spent', 'Bank se gaya')}</div><div class="amt">${inr(bankVal)}</div></div>
+        <div class="bal-card cash tap" data-go="cash" tabindex="0" role="button"><div class="label">💵 ${cashTracked ? tr('Cash in hand', 'Cash haath me') : tr('Cash spent', 'Cash se gaya')}</div><div class="amt">${inr(cashVal)}</div></div>
+        <div class="bal-card bank tap" data-go="bank" tabindex="0" role="button"><div class="label">🏦 ${bankTracked ? tr('In bank', 'Bank me') : tr('Bank spent', 'Bank se gaya')}</div><div class="amt">${inr(bankVal)}</div></div>
       </div>
       <div class="stat-row">
-        <div class="stat"><div class="label">${tr('House total spent', 'Ghar ka kul kharcha')}</div><div class="amt spend">${inr(kul)}</div>${personal > 0 ? `<div class="sub-note">+ ${tr('Personal', 'Personal')} ${inr(personal)}</div>` : ''}</div>
-        <div class="stat"><div class="label">${tr('This month', 'Is mahine')}</div><div class="amt spend">${inr(isMah)}</div><div class="sub-note">${tr('Last month', 'Pichle mahine')} ${inr(pichla)}</div></div>
+        <div class="stat tap" data-go="kul" tabindex="0" role="button"><div class="label">${tr('House total spent', 'Ghar ka kul kharcha')}</div><div class="amt spend">${inr(kul)}</div>${personal > 0 ? `<div class="sub-note">+ ${tr('Personal', 'Personal')} ${inr(personal)}</div>` : ''}</div>
+        <div class="stat tap" data-go="month" tabindex="0" role="button"><div class="label">${tr('This month', 'Is mahine')}</div><div class="amt spend">${inr(isMah)}</div><div class="sub-note">${tr('Last month', 'Pichle mahine')} ${inr(pichla)}</div></div>
       </div>
+      </div>
+
+      <div class="dash-grid">
 
       ${budget ? (() => { const pct = Math.min(100, Math.round(kul / budget * 100)); const left = budget - kul; return `<div class="report-card" style="margin-top:12px"><h4>🏠 ${tr('Budget', 'Budget')}</h4>
         <div class="bar ${kul > budget ? 'red' : ''}"><span style="width:${pct}%"></span></div>
         <div class="muted" style="margin-top:6px">${inr(kul)} / ${inr(budget)} · ${pct}% · ${left >= 0 ? tr('left ', 'baaki ') + inr(left) : tr('over by ', 'budget se upar ') + inr(-left)}</div></div>`; })() : ''}
 
       ${dena.length ? `<div class="report-card" style="margin-top:12px"><h4>🧾 ${tr('To pay / pending', 'Dena baaki / pending')}</h4>
-        ${dena.map((r) => `<div class="rrow tap" data-party="${esc(r.party)}"><div class="k">${esc(r.label)}</div><div class="v" style="color:${r.color}">${esc(r.v)}</div></div>`).join('')}</div>` : ''}
+        ${dena.map((r) => `<div class="rrow tap" data-party="${esc(r.party)}" tabindex="0" role="button"><div class="k">${esc(r.label)}</div><div class="v" style="color:${r.color}">${esc(r.v)}</div></div>`).join('')}</div>` : ''}
 
       <div class="report-card chart-card">
         <div class="chart-head">
@@ -764,9 +1041,10 @@ function screenDashboard() {
       </div>
 
       ${hasMonthData ? `<div class="report-card chart-card"><h4>📅 ${tr('Monthly spend (6 months)', 'Mahine-wise kharcha (6 mahine)')}</h4>${barSVG(months)}</div>` : ''}
+      </div>
 
-      <div class="section-label">${tr('Recent', 'Recent')}</div>
-      <div class="list">${recent.length ? recent.map(entryRow).join('') : emptyState(tr('No entries yet. Start from the buttons above 👆', 'Abhi koi entry nahi. Upar se shuru karein 👆'))}</div>
+      <div class="section-label sl-row"><span>${tr('Recent', 'Recent')}</span>${recent.length ? `<button type="button" class="link-btn" id="see-all">${tr('See all', 'Sab entries')} ›</button>` : ''}</div>
+      <div class="list">${recent.length ? recent.map((t) => entryRow(t)).join('') : emptyState(tr('No entries yet. Start from the buttons above 👆', 'Abhi koi entry nahi. Upar se shuru karein 👆'))}</div>
     </div>`;
 
   const bind = () => {
@@ -776,6 +1054,16 @@ function screenDashboard() {
     const rt = $('#dash-range');
     if (rt) rt.querySelectorAll('button').forEach((b) => b.onclick = () => { dashRange = b.dataset.r; renderScreen(); });
     $('#screen').querySelectorAll('.rrow[data-party]').forEach((el) => el.onclick = () => openParty(el.dataset.party));
+    // Cards tappable: Cash/Bank → us account ki entries; kul → Reports Category; is mahine → is mahine ki entries
+    $('#screen').querySelectorAll('[data-go]').forEach((el) => el.onclick = () => {
+      const g = el.dataset.go;
+      if (g === 'cash' && cashAcc) openEntriesWith({ account: cashAcc.id });
+      else if (g === 'bank' && bankAcc) openEntriesWith({ account: bankAcc.id });
+      else if (g === 'kul') { state.reportTab = 'category'; state.f.range = 'all'; state.f.from = ''; state.f.to = ''; show('reports'); }
+      else if (g === 'month') openEntriesWith({ range: 'month', type: 'Out', includePersonal: false });
+    });
+    const rpc = $('#rp-chips'); if (rpc) rpc.querySelectorAll('.chip').forEach((c) => c.onclick = () => openOutForm(null, { vendor: c.dataset.v }));
+    const sa = $('#see-all'); if (sa) sa.onclick = () => { state.entriesFrom = null; show('entries'); };
     if (ql) bindQuickLabour(ql);
     bindEntryRows();
   };
@@ -815,183 +1103,482 @@ function bindQuickLabour(ql) {
 
 function emptyState(msg) { return `<div class="empty"><div class="big">📭</div>${esc(msg)}</div>`; }
 
-function entryRow(t) {
-  let title, meta, cls, ico, amtCls, sign;
+// Ek entry ki row. opts: noDate (Entries me date header pe hai), running (party ledger me ab tak kul diya)
+function entryRow(t, opts) {
+  opts = opts || {};
+  let title, cls, ico, sign; const bits = [];
+  const pl = (name) => name ? `<span class="pl ud" data-party="${esc(name)}">${esc(name)}</span>` : '';
   if (t.type === 'Out') {
-    cls = 'out'; amtCls = 'out'; sign = '−';
-    ico = CAT_ICON[t.category] || '🧾';
-    title = t.category === 'Theka Payment' ? (tr('Theka', 'Theka') + (t.vendor ? ' — ' + t.vendor : '')) : (t.item || t.category || tr('Expense', 'Kharcha'));
-    const bits = [];
-    if (t.qty) bits.push(fmtQtyRate(t));
-    if (t.vendor && t.category !== 'Theka Payment') bits.push(t.vendor);
-    if (t.account_id) bits.push(accName(t.account_id));
-    meta = bits.filter(Boolean).join(' · ');
+    cls = 'out'; sign = '−'; ico = CAT_ICON[t.category] || '🧾';
+    if (t.category === 'Theka Payment') {
+      const c = contractById(t.contract_id), party = t.vendor || (c && c.thekedar_name) || '';
+      title = esc(tr('Theka', 'Theka')) + (party ? ' — ' + pl(party) : '');
+    } else title = `<span class="ud">${esc(t.item || t.category || tr('Expense', 'Kharcha'))}</span>`;
+    if (t.qty) bits.push(esc(fmtQtyRate(t)));
+    if (t.vendor && t.category !== 'Theka Payment') bits.push(pl(t.vendor));
+    if (t.account_id) bits.push(esc(accName(t.account_id)));
   } else if (t.type === 'In') {
-    cls = 'in'; amtCls = 'in'; sign = '+'; ico = '💰';
-    title = t.source || tr('Money In', 'Paisa Aaya');
-    meta = [t.from_party, accName(t.account_id)].filter(Boolean).join(' · ');
+    cls = 'in'; sign = '+'; ico = '💰';
+    title = `<span class="ud">${esc(t.source || tr('Money In', 'Paisa Aaya'))}</span>`;
+    if (t.from_party) bits.push(pl(t.from_party));
+    if (t.account_id) bits.push(esc(accName(t.account_id)));
   } else {
-    cls = 'transfer'; amtCls = 'transfer'; sign = ''; ico = '🔁';
-    title = 'Transfer';
-    meta = `${accName(t.account_id)} → ${accName(t.to_account_id)}`;
+    cls = 'transfer'; sign = ''; ico = '🔁';
+    title = esc(tr('Transfer', 'Transfer'));
+    bits.push(esc(`${accName(t.account_id)} → ${accName(t.to_account_id)}`));
   }
-  const modeTag = t.payment_mode === 'Udhaar' ? '<span class="tag udhaar">Udhaar</span>' : '';
-  return `<div class="entry ${cls}" data-id="${t.id}">
+  if (!opts.noDate) bits.unshift(esc(fmtDate(t.date)));
+  const note = cleanNote(t.notes);
+  if (note) bits.push(`<span class="nt">📝 ${esc(note)}</span>`);
+  const tag = t.payment_mode === 'Udhaar' ? '<span class="tag udhaar">Udhaar</span>' : (paidOn(t.notes) ? `<span class="tag paid">${esc(tr('settled', 'chukaya'))}</span>` : '');
+  return `<div class="entry ${cls}${opts.noDate ? ' compact' : ''}" data-id="${esc(t.id)}" tabindex="0" role="button"${t.payment_mode === 'Udhaar' ? ' data-ud="1"' : ''}>
     <div class="ic">${ico}</div>
     <div class="body">
-      <div class="ttl">${modeTag}${esc(title)}</div>
-      <div class="meta">${fmtDate(t.date)} · ${esc(meta)}</div>
+      <div class="ttl">${tag}${title}</div>
+      <div class="meta">${bits.join(' · ')}</div>
     </div>
-    <div class="amt ${amtCls}">${sign}${inr(t.amount)}</div>
+    <div class="amt ${cls}">${sign}${inr(t.amount)}${opts.running != null ? `<small>∑ ${inr(opts.running)}</small>` : ''}</div>
   </div>`;
 }
+// Row tap → detail. Party naam pe tap → Entries us party ke filter ke saath.
 function bindEntryRows(root) {
-  (root || $('#screen')).querySelectorAll('.entry').forEach((el) => {
-    el.onclick = () => { const t = state.transactions.find((x) => x.id === el.dataset.id); if (t) openEntryDetail(t); };
+  (root || $('#screen')).querySelectorAll('.entry[data-id]').forEach((el) => {
+    el.onclick = (e) => {
+      const pl = e.target.closest('.pl');
+      if (pl) {
+        e.stopPropagation();
+        const inSheet = !!el.closest('.modal');
+        if (inSheet) closeSheet();
+        openEntriesWith({ party: pl.dataset.party }, { refine: state.view === 'entries' && !inSheet });
+        return;
+      }
+      const t = state.transactions.find((x) => x.id === el.dataset.id); if (!t) return;
+      // Laptop pe Entries list ki row → detail right pane me (sheet nahi)
+      if (paneMode() && el.closest('#ef-list')) { state.efSel = t.id; renderPane(); return; }
+      openEntryDetail(t);
+    };
   });
 }
 
 /* ========================= SCREEN: ENTRIES ======================== */
-const entryFilter = { type: 'all', q: '' };
+const EF_PAGE = 250;
+let efLimit = EF_PAGE, efTimer = null, viewEdit = false;
 function screenEntries() {
+  const f = state.f;
   const html = `
     <div class="screen">
+      ${state.entriesFrom && VIEW_NAMES()[state.entriesFrom] ? `<button type="button" class="back-link" id="ef-back">‹ ${esc(tr('Back to ', 'Wapas ') + VIEW_NAMES()[state.entriesFrom])}</button>` : ''}
       <h2 class="title">${tr('All Entries', 'Saari Entries')}</h2>
+      <div id="ef-views"></div>
       <div class="toolbar">
-        <input id="ef-q" placeholder="🔍 ${tr('Item, vendor, note…', 'Item, vendor, note…')}" value="${esc(entryFilter.q)}" />
+        <input id="ef-q" type="search" enterkeyhint="search" autocomplete="off" placeholder="🔍 ${tr('Item, party, note, ₹, date…', 'Item, party, note, ₹, date…')}" value="${esc(f.q)}" />
+        <button type="button" class="btn-secondary filter-btn" id="ef-filter"></button>
       </div>
       <div class="filter-chips" id="ef-chips">
-        ${['all', 'Out', 'In', 'Transfer'].map((ty) => `<button class="chip sm ${entryFilter.type === ty ? 'active' : ''}" data-t="${ty}">${({ all: tr('All', 'Sab'), Out: tr('Expense', 'Kharcha'), In: tr('In', 'Aaya'), Transfer: tr('Transfer', 'Transfer') })[ty]}</button>`).join('')}
+        ${['all', 'Out', 'In', 'Transfer'].map((ty) => `<button type="button" class="chip sm ${f.type === ty ? 'active' : ''}" data-t="${ty}">${esc(typeName(ty))}</button>`).join('')}
       </div>
+      <div id="ef-active"></div>
       <div id="ef-sum" class="ef-sum"></div>
-      <div class="list" id="ef-list"></div>
+      <div class="ef-split"><div id="ef-list"></div><aside class="ef-pane" id="ef-pane" aria-live="polite"></aside></div>
     </div>`;
   const bind = () => {
-    const renderList = () => {
-      let rows = state.transactions.slice();
-      if (entryFilter.type !== 'all') rows = rows.filter((t) => t.type === entryFilter.type);
-      const q = entryFilter.q.trim().toLowerCase();
-      if (q) rows = rows.filter((t) => [t.item, t.vendor, t.notes, t.source, t.from_party, t.category].some((x) => (x || '').toLowerCase().includes(q)));
-      const out = rows.filter((t) => t.type === 'Out').reduce((s, t) => s + (Number(t.amount) || 0), 0);
-      const inn = rows.filter((t) => t.type === 'In').reduce((s, t) => s + (Number(t.amount) || 0), 0);
-      const bits = [`${rows.length} ${tr('entries', 'entries')}`];
-      if (out) bits.push(`<b style="color:var(--red)">${tr('Gaya', 'Gaya')} ${inr(out)}</b>`);
-      if (inn) bits.push(`<b style="color:var(--green)">${tr('Aaya', 'Aaya')} ${inr(inn)}</b>`);
-      $('#ef-sum').innerHTML = rows.length ? bits.join(' · ') : '';
-      $('#ef-list').innerHTML = rows.length ? rows.map(entryRow).join('') : emptyState(tr('Nothing found', 'Kuch nahi mila'));
-      bindEntryRows();
+    renderEntriesList();
+    $('#ef-q').oninput = (e) => {
+      const v = e.target.value; clearTimeout(efTimer);
+      efTimer = setTimeout(() => { state.f.q = v; efLimit = EF_PAGE; renderEntriesList(); }, 150);
     };
-    $('#ef-q').oninput = (e) => { entryFilter.q = e.target.value; renderList(); };
     $('#ef-chips').querySelectorAll('.chip').forEach((c) => c.onclick = () => {
-      entryFilter.type = c.dataset.t; $('#ef-chips').querySelectorAll('.chip').forEach((x) => x.classList.toggle('active', x === c)); renderList();
+      state.f.type = c.dataset.t; efLimit = EF_PAGE;
+      $('#ef-chips').querySelectorAll('.chip').forEach((x) => x.classList.toggle('active', x === c)); renderEntriesList();
     });
-    renderList();
+    $('#ef-filter').onclick = openFilterSheet;
+    const back = $('#ef-back'); if (back) back.onclick = () => { const v = state.entriesFrom; state.entriesFrom = null; show(v, { restore: true }); };
   };
   return { html, bind };
+}
+// Sirf list wala hissa dobara banao (search box/keyboard nahi chhedta)
+function renderEntriesList() {
+  const f = state.f, list = $('#ef-list'); if (!list) return;
+  const rows = filteredTx(f);
+  // saved views
+  const views = savedViews(), cur = filterJson(f);
+  $('#ef-views').innerHTML = views.length ? `<div class="filter-chips views">${views.map((v, i) => `<span class="vchip-wrap"><button type="button" class="chip sm vchip ud ${filterJson(v.f) === cur ? 'active' : ''}" data-vi="${i}">⭐ ${esc(v.name)}</button>${viewEdit ? `<button type="button" class="vchip-x" data-vx="${i}" aria-label="${esc(tr('Delete view', 'View hatao'))}">✕</button>` : ''}</span>`).join('')}
+    <button type="button" class="chip sm ghost" id="ef-vedit">${viewEdit ? esc(tr('Done', 'Ho gaya')) : '✏️'}</button></div>` : '';
+  const fc = filterCount(f);
+  $('#ef-filter').textContent = '+ ' + tr('Filter', 'Filter') + (fc ? ' (' + fc + ')' : '');
+  // active filter chips
+  const chips = activeFilterChips(f);
+  $('#ef-active').innerHTML = chips.length ? `<div class="active-chips">${chips.map((c) => `<button type="button" class="chip sm fchip ud" data-clear="${c.k}">${esc(c.label)} ✕</button>`).join('')}<button type="button" class="link-btn" id="ef-clear">${tr('Clear', 'Saaf karo')}</button></div>` : '';
+  // summary
+  const s = rowsTotals(rows);
+  const bits = [`<b>${rows.length}</b> ${tr('entries', 'entries')}`];
+  if (s.out) bits.push(`<b style="color:var(--red)">${tr('Out', 'Gaya')} ${inr(s.out)}</b>`);
+  if (s.inn) bits.push(`<b style="color:var(--green)">${tr('In', 'Aaya')} ${inr(s.inn)}</b>`);
+  if (s.ud) bits.push(`<b style="color:#8a6100">Udhaar ${inr(s.ud)}</b>`);
+  $('#ef-sum').innerHTML = `<div class="sum-line">${bits.join(' · ')}</div>
+    <div class="sum-actions">${rows.length ? `<button type="button" class="link-btn" id="ef-csv">⬇️ CSV</button>` : ''}${filterActive(f) && !views.some((v) => filterJson(v.f) === cur) ? `<button type="button" class="link-btn" id="ef-save-view">⭐ ${tr('Save view', 'View save karo')}</button>` : ''}</div>`;
+  // list grouped by date
+  if (!rows.length) list.innerHTML = emptyState(filterActive(f) ? tr('Nothing found for this filter', 'Is filter me kuch nahi mila') : tr('No entries yet', 'Abhi koi entry nahi'));
+  else {
+    const dayOut = {};
+    for (const t of rows) if (t.type === 'Out') dayOut[t.date] = (dayOut[t.date] || 0) + (Number(t.amount) || 0);
+    let html = '', cur = null;
+    for (const t of rows.slice(0, efLimit)) {
+      if (t.date !== cur) {
+        if (cur !== null) html += '</div></section>';
+        cur = t.date;
+        html += `<section class="day"><div class="day-h"><span>${esc(dayLabel(cur))}</span>${dayOut[cur] ? `<span class="day-t">${inr(dayOut[cur])}</span>` : ''}</div><div class="day-card">`;
+      }
+      html += entryRow(t, { noDate: true });
+    }
+    if (cur !== null) html += '</div></section>';
+    if (rows.length > efLimit) html += `<button type="button" class="btn-ghost" id="ef-more">${tr('Show more', 'Aur dikhao')} (${rows.length - efLimit})</button>`;
+    list.innerHTML = html;
+    bindEntryRows(list);
+  }
+  // binds
+  const rerender = () => { efLimit = EF_PAGE; renderEntriesList(); };
+  $('#ef-active').querySelectorAll('[data-clear]').forEach((b) => b.onclick = () => { clearFilterKey(state.f, b.dataset.clear); if (b.dataset.clear === 'q') $('#ef-q').value = ''; rerender(); });
+  const cl = $('#ef-clear'); if (cl) cl.onclick = () => { const ty = state.f.type; state.f = blankFilter(); state.f.type = ty; $('#ef-q').value = ''; rerender(); };
+  const csv = $('#ef-csv'); if (csv) csv.onclick = () => exportCSV(rows, filterActive(f) ? 'filtered-' : '');
+  const sv = $('#ef-save-view'); if (sv) sv.onclick = openSaveView;
+  const more = $('#ef-more'); if (more) more.onclick = () => { efLimit += EF_PAGE; renderEntriesList(); };
+  renderPane();
+  const ve = $('#ef-vedit'); if (ve) ve.onclick = () => { viewEdit = !viewEdit; renderEntriesList(); };
+  $('#ef-views').querySelectorAll('[data-vx]').forEach((b) => b.onclick = (e) => { e.stopPropagation(); deleteSavedView(+b.dataset.vx); });
+  $('#ef-views').querySelectorAll('.vchip').forEach((b) => {
+    let timer = null, long = false;
+    const cancel = () => clearTimeout(timer);
+    b.addEventListener('pointerdown', () => { long = false; timer = setTimeout(() => { long = true; deleteSavedView(+b.dataset.vi); }, 650); });
+    b.addEventListener('pointerup', cancel); b.addEventListener('pointerleave', cancel); b.addEventListener('pointercancel', cancel);
+    b.addEventListener('contextmenu', (e) => e.preventDefault());
+    b.onclick = () => {
+      if (long) { long = false; return; }
+      const v = savedViews()[+b.dataset.vi]; if (!v) return;
+      state.f = Object.assign(blankFilter(), cleanFilter(v.f)); efLimit = EF_PAGE; renderScreen(0);
+    };
+  });
+}
+
+/* ---- Filter sheet ("+ Filter"): date, party, category, item, mode, account, type, personal ---- */
+function partyOptions() {
+  const vm = vendorMap(), cnt = {}, label = {};
+  for (const t of state.transactions) for (const v of [t.vendor, t.from_party]) {
+    const k = nameKey(v); if (!k) continue; cnt[k] = (cnt[k] || 0) + 1; if (!label[k]) label[k] = canonName(v, vm);
+  }
+  for (const c of state.contracts) { const k = nameKey(c.thekedar_name); if (k && !label[k]) { label[k] = canonName(c.thekedar_name, vm); cnt[k] = cnt[k] || 0; } }
+  return Object.keys(label).map((k) => ({ v: label[k], n: cnt[k] })).sort((a, b) => b.n - a.n || a.v.localeCompare(b.v));
+}
+function itemOptions() {
+  const im = itemMap(), cnt = {}, label = {};
+  for (const t of state.transactions) { const k = nameKey(t.item); if (!k) continue; cnt[k] = (cnt[k] || 0) + 1; if (!label[k]) label[k] = canonName(t.item, im); }
+  return Object.keys(label).map((k) => ({ v: label[k], n: cnt[k] })).sort((a, b) => b.n - a.n || a.v.localeCompare(b.v));
+}
+function openFilterSheet() {
+  const d = Object.assign({}, state.f);
+  const pOpts = partyOptions(), iOpts = itemOptions();
+  const inner = `
+    <h3>🔎 ${tr('Filter entries', 'Entries filter')}</h3>
+    <div class="field"><label>${tr('Date', 'Date')}</label><div class="chips" id="fs-range"></div>
+      <div class="row2 ${d.range === 'custom' ? '' : 'hidden'}" id="fs-custom" style="margin-top:8px">
+        <div><label class="mini-l">${tr('From', 'Kab se')}</label><input id="fs-from" type="date" value="${esc(d.from)}" /></div>
+        <div><label class="mini-l">${tr('To', 'Kab tak')}</label><input id="fs-to" type="date" value="${esc(d.to)}" /></div></div></div>
+    <div class="field"><label>${tr('Party', 'Party (kise diya / kisse aaya)')}</label><input id="fs-pq" class="mini-q" type="search" autocomplete="off" placeholder="🔍 ${tr('search name', 'naam dhoondo')}" /><div class="chips pick" id="fs-party"></div></div>
+    <div class="field"><label>${tr('Category', 'Category')}</label><div class="chips pick" id="fs-cat"></div></div>
+    <div class="field"><label>${tr('Item', 'Item')}</label><input id="fs-iq" class="mini-q" type="search" autocomplete="off" placeholder="🔍 ${tr('search item', 'item dhoondo')}" /><div class="chips pick" id="fs-item"></div></div>
+    <div class="field"><label>${tr('Payment mode', 'Payment mode')}</label><div class="chips pick" id="fs-mode"></div></div>
+    <div class="field"><label>${tr('Account', 'Account')}</label><div class="chips pick" id="fs-acc"></div></div>
+    <div class="field"><label>${tr('Type', 'Type')}</label><div class="chips pick" id="fs-type"></div></div>
+    <div class="field"><label>${tr('Include Personal?', 'Personal shamil?')}</label><div class="chips pick" id="fs-pers"></div></div>
+    <div class="sheet-foot"><button class="btn-primary" id="fs-apply"></button>
+    <button class="btn-ghost" id="fs-reset">${tr('Remove all filters', 'Saare filter hatao')}</button></div>`;
+  openSheet(inner, (root) => {
+    const apply = root.querySelector('#fs-apply');
+    const update = () => {
+      const rows = filteredTx(d), s = rowsTotals(rows);
+      apply.textContent = `${tr('Show', 'Dikhao')}: ${rows.length} ${tr('entries', 'entries')}` + (s.out ? ' · ' + tr('Out ', 'Gaya ') + inr(s.out) : (s.inn ? ' · ' + tr('In ', 'Aaya ') + inr(s.inn) : ''));
+    };
+    // chip group: opts() → [{v,label}], toggle = dobara tap pe hatao
+    const group = (id, opts, field, toggle, onSet) => {
+      const el = root.querySelector('#' + id);
+      const paint = () => {
+        el.innerHTML = opts().map((o) => `<button type="button" class="chip sm ${o.ud ? 'ud' : ''} ${String(d[field]) === String(o.v) ? 'active' : ''}" data-v="${esc(o.v)}">${esc(o.label)}${o.n != null ? ` <span class="cn">${o.n}</span>` : ''}</button>`).join('') || `<span class="muted">${tr('No match', 'Kuch nahi mila')}</span>`;
+        el.querySelectorAll('.chip').forEach((c) => c.onclick = () => {
+          let v = c.dataset.v; if (v === 'true') v = true; else if (v === 'false') v = false;
+          d[field] = (toggle && String(d[field]) === String(v)) ? '' : v;
+          if (onSet) onSet(d[field]); paint(); update();
+        });
+      };
+      paint(); return paint;
+    };
+    group('fs-range', () => ['all', 'month', 'lastmonth', 'custom'].map((r) => ({ v: r, label: rangeName(r) })), 'range', false, (r) => {
+      root.querySelector('#fs-custom').classList.toggle('hidden', r !== 'custom');
+      if (r === 'custom' && !d.from && !d.to) { const n = new Date(); d.from = monthBounds(n.getFullYear(), n.getMonth()).from; d.to = today(); root.querySelector('#fs-from').value = d.from; root.querySelector('#fs-to').value = d.to; }
+    });
+    root.querySelector('#fs-from').onchange = (e) => { d.from = e.target.value; update(); };
+    root.querySelector('#fs-to').onchange = (e) => { d.to = e.target.value; update(); };
+    const pq = root.querySelector('#fs-pq'), iq = root.querySelector('#fs-iq');
+    const pick = (all, qEl, field) => () => {
+      const q = nameKey(qEl.value);
+      let list = all.filter((o) => !q || nameKey(o.v).includes(q));
+      const sel = all.find((o) => nameKey(o.v) === nameKey(d[field]));
+      list = list.slice(0, 24); if (sel && !list.includes(sel)) list.unshift(sel);
+      return list.map((o) => ({ v: o.v, label: o.v, n: o.n, ud: true }));
+    };
+    const paintParty = group('fs-party', pick(pOpts, pq, 'party'), 'party', true);
+    const paintItem = group('fs-item', pick(iOpts, iq, 'item'), 'item', true);
+    pq.oninput = paintParty; iq.oninput = paintItem;
+    group('fs-cat', () => allCats().map((c) => ({ v: c, label: c })), 'category', true);
+    group('fs-mode', () => PAY_MODES.map((m) => ({ v: m, label: m })), 'mode', true);
+    group('fs-acc', () => state.accounts.map((a) => ({ v: a.id, label: (a.type === 'Cash' ? '💵 ' : '🏦 ') + a.name, ud: true })), 'account', true);
+    group('fs-type', () => ['all', 'Out', 'In', 'Transfer'].map((ty) => ({ v: ty, label: typeName(ty) })), 'type', false);
+    group('fs-pers', () => [{ v: true, label: tr('Yes', 'Haan') }, { v: false, label: tr('No', 'Nahi') }], 'includePersonal', false);
+    update();
+    apply.onclick = () => {
+      if (d.range !== 'custom') { d.from = ''; d.to = ''; }
+      state.f = Object.assign(blankFilter(), cleanFilter(d)); efLimit = EF_PAGE; scrollPos.entries = 0;
+      closeSheet(); if (state.view === 'entries') renderScreen(0); else show('entries', { top: true });
+    };
+    root.querySelector('#fs-reset').onclick = () => { state.f = blankFilter(); efLimit = EF_PAGE; closeSheet(); if (state.view === 'entries') renderScreen(0); else show('entries'); };
+  });
 }
 
 /* ========================= SCREEN: REPORTS ======================== */
-function rangeLabel() { return { all: tr('All', 'Sab'), month: tr('This Month', 'Is Mahina'), lastmonth: tr('Last Month', 'Pichla Mahina') }[state.filterRange]; }
+const REPORT_TABS = [['summary', 'Summary', 'Summary'], ['category', 'Category', 'Category'], ['party', 'Party', 'Party'], ['item', 'Item', 'Item'], ['month', 'Month', 'Mahina']];
+// Report ki ek list (sab rows, bar, count). partFn(row) → filter; har row tap → Entries (us dimension + date range)
+function reportList(title, rows, partFn, opts) {
+  opts = opts || {};
+  if (!rows.length) return `<div class="report-card"><h4>${title}</h4><div class="muted">${tr('Nothing in this range', 'Is range me kuch nahi')}</div></div>`;
+  const max = Math.max(1, ...rows.map((r) => Math.abs(r.amount))), total = rows.reduce((s, r) => s + r.amount, 0);
+  return `<div class="report-card list-card"><h4>${title}<span class="h4-sub">${rows.length} · ${inr(total)}</span></h4><div class="rl-rows">${rows.map((r) => {
+    const w = Math.min(100, Math.max(0, Math.round(Math.abs(r.amount) / max * 100)));
+    const pct = total ? Math.round(r.amount / total * 100) : 0;
+    const sub = opts.sub ? opts.sub(r) : esc(`${r.count} ${tr('entries', 'entries')}${opts.pct ? ' · ' + pct + '%' : ''}`);
+    const part = partFn ? partFn(r) : null;
+    return `<div class="rli ${part ? 'tap' : ''}"${part ? ` data-f="${esc(JSON.stringify(part))}" tabindex="0" role="button"` : ''}><div class="rrow"><div class="k"><span class="ud">${esc(r.key)}</span><small>${sub}</small></div><div class="v">${inr(r.amount)}${part ? '<span class="chev">›</span>' : ''}</div></div>
+      ${opts.bar === false ? '' : `<div class="bar ${opts.red ? 'red' : ''}"><span style="width:${w}%"></span></div>`}</div>`;
+  }).join('')}</div></div>`;
+}
 function screenReports() {
-  const rf = state.filterRange === 'all' ? null : true;
-  const aaya = groupSum('In', (t) => t.source, rf);
-  const byCat = groupSum('Out', (t) => t.category, rf);
-  const byItem = groupSum('Out', (t) => t.item || (t.category === 'Theka Payment' ? 'Theka' : '—'), rf).filter((x) => x.key !== '—').slice(0, 12);
-  const byVendor = groupSum('Out', (t) => t.vendor, rf).filter((x) => x.key !== '—').slice(0, 12);
-  const byMode = groupSum('Out', (t) => t.payment_mode, rf);
-  const totalIn = aaya.reduce((s, x) => s + x.amount, 0);
-  const totalOut = byCat.reduce((s, x) => s + x.amount, 0);
-  const buildOut = state.transactions.filter((t) => isBuildOut(t) && (!rf || inRange(t.date))).reduce((s, t) => s + (Number(t.amount) || 0), 0);
-  const bankUntracked = state.accounts.some((a) => a.type === 'Bank' && !accTracked(a));
-  const udhaarByVendor = (() => {
-    const m = {}; state.transactions.filter((t) => t.type === 'Out' && t.payment_mode === 'Udhaar').forEach((t) => { const k = t.vendor || '—'; m[k] = (m[k] || 0) + (Number(t.amount) || 0); });
-    return Object.entries(m).map(([k, v]) => ({ key: k, amount: v })).sort((a, b) => b.amount - a.amount);
-  })();
-
-  const card = (title, rows, opts = {}) => {
-    if (!rows.length) return '';
-    const max = Math.max(1, ...rows.map((r) => Math.abs(r.amount)));
-    return `<div class="report-card"><h4>${title}</h4>${rows.map((r) => {
-      const sub = opts.showQty && r.units && Object.keys(r.units).length ? `<small>${esc(fmtUnits(r.units))}</small>` : `<small>${r.count} entries</small>`;
-      const w = Math.min(100, Math.max(0, Math.round(Math.abs(r.amount) / max * 100)));
-      return `<div class="rrow"><div class="k">${esc(r.key)}${sub}</div><div class="v">${inr(r.amount)}</div></div>
-      ${opts.bar ? `<div class="bar ${opts.red ? 'red' : ''}"><span style="width:${w}%"></span></div>` : ''}`;
-    }).join('')}</div>`;
-  };
-
-  const thekaRows = state.contracts.map((c) => {
-    const s = thekaStatus(c), sl = thekaStatusLine(s);
-    return `<div class="rrow"><div class="k">${esc(c.thekedar_name || c.kaam || tr('Theka', 'Theka'))}<small>${esc(c.kaam || '')}</small></div>
-      <div class="v">${inr(s.paid)} / ${s.amt ? inr(s.amt) : '—'}<br><small style="color:${sl.color}">${esc(sl.k)}: ${esc(sl.v)}</small></div></div>
-      <div class="bar"><span style="width:${s.amt ? Math.min(100, Math.round(s.paid / s.amt * 100)) : 0}%"></span></div>`;
-  }).join('');
-
+  const f = state.f, tab = state.reportTab || 'summary';
+  const dateF = { range: f.range, from: f.from, to: f.to };
+  const inR = (t) => inDates(t.date, dateF);
+  const rl = rangeText(f) || tr('All', 'Sab');
+  let body;
+  if (tab === 'category') body = reportCategory(inR);
+  else if (tab === 'party') body = reportParty(inR);
+  else if (tab === 'item') body = reportItem(inR);
+  else if (tab === 'month') body = reportMonth(inR);
+  else body = reportSummary(inR, rl);
   const html = `
     <div class="screen">
-      <h2 class="title">${tr('Reports', 'Reports')} — ${rangeLabel()}</h2>
+      <h2 class="title">${tr('Reports', 'Reports')} — ${esc(rl)}</h2>
+      <div class="seg-tabs" id="rp-tabs">${REPORT_TABS.map(([k, en, hi]) => `<button type="button" class="${tab === k ? 'on' : ''}" data-tab="${k}">${tr(en, hi)}</button>`).join('')}</div>
       <div class="filter-chips" id="rf-chips">
-        ${['all', 'month', 'lastmonth'].map((r) => `<button class="chip sm ${state.filterRange === r ? 'active' : ''}" data-r="${r}">${({ all: tr('All', 'Sab'), month: tr('This Month', 'Is Mahina'), lastmonth: tr('Last Month', 'Pichla Mahina') })[r]}</button>`).join('')}
+        ${['all', 'month', 'lastmonth', 'custom'].map((r) => `<button type="button" class="chip sm ${(f.range || 'all') === r ? 'active' : ''}" data-r="${r}">${esc(rangeName(r))}</button>`).join('')}
       </div>
-
-      <div class="report-card">
-        <h4>💼 ${tr('Account Balances (now)', 'Account Balances (abhi)')}</h4>
-        ${state.accounts.map((a) => { const tk = accTracked(a); const v = tk ? inr(balanceOf(a.id)) : `<span class="muted" style="font-weight:600">${tr('Spent', 'Gaya')} ${inr(spentViaAccount(a.id))}</span>`; return `<div class="rrow"><div class="k">${a.type === 'Cash' ? '💵' : '🏦'} ${esc(a.name)}</div><div class="v">${v}</div></div>`; }).join('') || `<div class="muted">${tr('No account', 'Koi account nahi')}</div>`}
-      </div>
-
-      <div class="report-card">
-        <h4>🔁 ${rangeLabel()} — ${tr('In vs Out', 'Aaya vs Gaya')}</h4>
-        <div class="rrow"><div class="k">${tr('Total In', 'Total Aaya (In)')}</div><div class="v" style="color:#1f7a4d">${inr(totalIn)}</div></div>
-        <div class="rrow"><div class="k">${tr('Total Out (spent)', 'Total Gaya (Kharcha)')}</div><div class="v" style="color:#c0392b">${inr(totalOut)}</div></div>
-        <div class="total-line"><span>${tr('In − Out', 'Aaya − Gaya')}</span><span>${inr(totalIn - totalOut)}</span></div>
-        ${bankUntracked ? `<div class="muted" style="margin-top:6px">${tr('Money coming into Bank is not tracked, so this is not your savings.', 'Bank me aaya paisa track nahi hota, isliye ye bachat nahi hai.')}</div>` : ''}
-        <div class="rrow" style="margin-top:6px"><div class="k">🏠 ${tr('House (construction) spend', 'Ghar (construction) kharcha')}<small>${tr('excludes Personal', 'Personal ke bina')}</small></div><div class="v">${inr(buildOut)}</div></div>
-      </div>
-
-      ${card('💰 ' + tr('Where money came from', 'Paisa kahan se aaya'), aaya, { bar: true })}
-      ${card('📦 ' + tr('Category-wise spend', 'Category-wise kharcha'), byCat, { bar: true, red: true })}
-      ${card('🧱 ' + tr('Item-wise (material/labour)', 'Item-wise (material/labour)'), byItem, { showQty: true })}
-      ${card('🏪 ' + tr('Vendor / where it went', 'Vendor / kise gaya'), byVendor)}
-      ${card('💳 ' + tr('Payment mode wise', 'Payment mode wise'), byMode)}
-
-      ${state.contracts.length ? `<div class="report-card"><h4>🤝 ${tr('Theka tracking', 'Theka tracking')}</h4>${thekaRows}</div>` : ''}
-      ${udhaarByVendor.length ? `<div class="report-card"><h4>⚠️ ${tr('Udhaar pending — total to pay (all-time)', 'Udhaar baaki — total dena hai (sab waqt ka)')}</h4>${udhaarByVendor.map((r) => `<div class="rrow"><div class="k">${esc(r.key)}</div><div class="v" style="color:#8a6100">${inr(r.amount)}</div></div>`).join('')}</div>` : ''}
-
-      <button class="btn-secondary" id="csv-btn" style="width:100%;margin-top:6px">⬇️ ${tr('CSV / Excel export', 'CSV / Excel export')}</button>
+      ${f.range === 'custom' ? `<div class="row2 custom-range"><div><label class="mini-l">${tr('From', 'Kab se')}</label><input id="rf-from" type="date" value="${esc(f.from)}" /></div><div><label class="mini-l">${tr('To', 'Kab tak')}</label><input id="rf-to" type="date" value="${esc(f.to)}" /></div></div>` : ''}
+      <div class="muted tap-hint">👆 ${tr('Tap any row to see its entries', 'Kisi bhi row pe tap karo — uski entries dikhengi')}</div>
+      <div class="r-body r-${tab}">${body}</div>
+      <button class="btn-secondary" id="csv-btn" style="width:100%;margin-top:6px">⬇️ ${tr('CSV / Excel export', 'CSV / Excel export')} (${esc(rl)})</button>
     </div>`;
-
   const bind = () => {
-    $('#rf-chips').querySelectorAll('.chip').forEach((c) => c.onclick = () => { state.filterRange = c.dataset.r; renderScreen(); });
-    $('#csv-btn').onclick = exportCSV;
+    $('#rp-tabs').querySelectorAll('button').forEach((b) => b.onclick = () => { state.reportTab = b.dataset.tab; renderScreen(0); });
+    $('#rf-chips').querySelectorAll('.chip').forEach((c) => c.onclick = () => {
+      const r = c.dataset.r; state.f.range = r;
+      if (r === 'custom') { if (!state.f.from && !state.f.to) { const n = new Date(); state.f.from = monthBounds(n.getFullYear(), n.getMonth()).from; state.f.to = today(); } }
+      else { state.f.from = ''; state.f.to = ''; }
+      renderScreen();
+    });
+    const fr = $('#rf-from'), to = $('#rf-to');
+    if (fr) fr.onchange = () => { state.f.from = fr.value; renderScreen(); };
+    if (to) to.onchange = () => { state.f.to = to.value; renderScreen(); };
+    $('#screen').querySelectorAll('[data-f]').forEach((el) => el.onclick = () => {
+      let part; try { part = JSON.parse(el.dataset.f); } catch (_) { return; }
+      openEntriesWith(part, { keepDates: !part._all });
+    });
+    const kh = $('#r-khata'); if (kh) kh.onclick = () => show('theka');
+    $('#csv-btn').onclick = () => exportCSV(state.transactions.filter(inR), f.range === 'all' ? '' : 'range-');
   };
   return { html, bind };
 }
-
-/* ========================== SCREEN: KHATA (theka + party hisaab) ========================= */
-// Har party (thekedar / vendor) ka ek jagah hisaab: theka kitna-diya-advance, side kaam ka udhaar,
-// aur ek tap me udhaar chukana. Theka alag, side labour (Udhaar) alag — dono mix nahi hote.
-function screenTheka() {
-  const ps = parties().filter((p) => p.contracts.length || p.udhaar > 0 || p.settled > 0);
-  const card = (p) => {
-    const lines = [];
-    for (const c of p.contracts) {
-      const s = thekaStatus(c), sl = thekaStatusLine(s);
-      lines.push(`<div class="rrow"><div class="k">🤝 ${tr('Theka', 'Theka')}${c.kaam ? ` <small>${esc(c.kaam)}</small>` : ''}</div><div class="v">${inr(s.paid)} / ${s.amt ? inr(s.amt) : '—'}</div></div>`);
-      lines.push(`<div class="rrow"><div class="k">${esc(sl.k)}</div><div class="v" style="color:${sl.color}">${esc(sl.v)}</div></div>`);
+function reportSummary(inR, rl) {
+  const T = state.transactions.filter(inR);
+  const sumT = (fn) => T.filter(fn).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const totalIn = sumT((t) => t.type === 'In'), totalOut = sumT((t) => t.type === 'Out');
+  const build = sumT(isBuildOut), personal = sumT((t) => t.type === 'Out' && NON_BUILD_CATS.includes(t.category));
+  const bankUntracked = state.accounts.some((a) => a.type === 'Bank' && !accTracked(a));
+  const ud = pendingUdhaar(), udTotal = ud.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const udBy = groupSum('Out', (t) => t.vendor, (t) => t.payment_mode === 'Udhaar');
+  const aaya = groupSum('In', (t) => t.from_party || t.source || 'Other', inR);
+  const fromKeys = new Set(state.transactions.filter((t) => t.type === 'In' && t.from_party).map((t) => nameKey(t.from_party)));
+  const byMode = groupSum('Out', (t) => t.payment_mode, inR);
+  const tapRow = (k, v, part, color, small) => `<div class="rli tap" data-f="${esc(JSON.stringify(part))}" tabindex="0" role="button"><div class="rrow"><div class="k">${k}${small ? `<small>${small}</small>` : ''}</div><div class="v"${color ? ` style="color:${color}"` : ''}>${v}<span class="chev">›</span></div></div></div>`;
+  return `
+    <div class="report-card">
+      <h4>🔁 ${esc(rl)} — ${tr('In vs Out', 'Aaya vs Gaya')}</h4>
+      ${tapRow(tr('Total In', 'Total Aaya (In)'), inr(totalIn), { type: 'In' }, '#1f7a4d')}
+      ${tapRow(tr('Total Out (spent)', 'Total Gaya (Kharcha)'), inr(totalOut), { type: 'Out' }, '#c0392b')}
+      <div class="total-line"><span>${tr('In − Out', 'Aaya − Gaya')}</span><span>${inr(totalIn - totalOut)}</span></div>
+      ${bankUntracked ? `<div class="muted" style="margin-top:6px">${tr('Money coming into Bank is not tracked, so this is not your savings.', 'Bank me aaya paisa track nahi hota, isliye ye bachat nahi hai.')}</div>` : ''}
+      ${tapRow('🏠 ' + tr('House (construction) spend', 'Ghar (construction) kharcha'), inr(build), { type: 'Out', includePersonal: false }, '', tr('excludes Personal', 'Personal ke bina'))}
+      ${personal ? tapRow('👤 ' + tr('Personal', 'Personal'), inr(personal), { category: 'Personal' }, '#db2777', tr('not in house total', 'ghar ke total me nahi')) : ''}
+    </div>
+    ${udTotal ? `<div class="report-card"><h4>⚠️ ${tr('Udhaar pending (now)', 'Udhaar baaki (abhi tak ka)')}<span class="h4-sub">${inr(udTotal)}</span></h4>
+      ${udBy.map((r) => tapRow(`<span class="ud">${esc(r.key)}</span>`, inr(r.amount), { party: r.key, mode: 'Udhaar', _all: 1 }, '#8a6100', esc(r.count + ' ' + tr('entries', 'entries')))).join('')}</div>` : ''}
+    ${reportList('💰 ' + tr('Where money came from', 'Paisa kahan se aaya'), aaya, (r) => fromKeys.has(nameKey(r.key)) ? { type: 'In', party: r.key } : { type: 'In', q: r.key }, { bar: true })}
+    ${reportList('💳 ' + tr('Payment mode wise', 'Payment mode wise'), byMode.filter((r) => r.key !== '—'), (r) => ({ type: 'Out', mode: r.key }), { pct: true })}
+    <div class="report-card">
+      <h4>💼 ${tr('Account balances (now)', 'Account balances (abhi)')}</h4>
+      ${state.accounts.map((a) => { const tk = accTracked(a); const v = tk ? inr(balanceOf(a.id)) : `<span class="muted" style="font-weight:600">${tr('Spent', 'Gaya')} ${inr(spentViaAccount(a.id))}</span>`; return tapRow(`${a.type === 'Cash' ? '💵' : '🏦'} <span class="ud">${esc(a.name)}</span>`, v, { account: a.id, _all: 1 }); }).join('') || `<div class="muted">${tr('No account', 'Koi account nahi')}</div>`}
+    </div>
+    <button type="button" class="link-card" id="r-khata">🤝 ${tr('Theka & party hisaab', 'Theka ka hisaab')} → ${tr('Khata', 'Khata')} <span class="chev">›</span></button>`;
+}
+function reportCategory(inR) {
+  const byCat = groupSum('Out', (t) => t.category, inR);
+  const segs = byCat.filter((r) => r.amount > 0).map((r) => ({ label: r.key, value: r.amount, color: CAT_COLOR[r.key] || '#94a3b8' }));
+  const total = segs.reduce((s, x) => s + x.value, 0);
+  return (segs.length ? `<div class="report-card chart-card"><div class="donut-wrap">${donutSVG(segs, total)}${donutLegend(segs, total)}</div></div>` : '') +
+    reportList('📦 ' + tr('Category-wise spend', 'Category-wise kharcha'), byCat, (r) => r.key === '—' ? null : { type: 'Out', category: r.key }, { bar: true, red: true, pct: true });
+}
+function reportParty(inR) {
+  const rows = groupSum('Out', (t) => t.vendor, inR).filter((x) => x.key !== '—');
+  return reportList('🏪 ' + tr('Party-wise (paid to)', 'Party-wise (kise gaya)'), rows, (r) => ({ type: 'Out', party: r.key }), { bar: true, pct: true });
+}
+// Item report: kul qty (unit ke saath), average rate, sabse kam→zyada rate, pehla→aakhri rate (trend). Theka nahi.
+function itemStats(pred) {
+  const im = itemMap(), map = {};
+  const olderFirst = state.transactions.filter((t) => t.type === 'Out' && t.category !== 'Theka Payment' && t.item && pred(t)).sort(sortOldFirst);
+  for (const t of olderFirst) {
+    const k = nameKey(t.item); if (!k) continue;
+    const g = map[k] || (map[k] = { key: canonName(t.item, im), amount: 0, count: 0, units: {}, rated: {} });
+    const a = Number(t.amount) || 0, q = Number(t.qty) || 0, r = Number(t.rate) || 0;
+    g.amount += a; g.count++;
+    if (q > 0 && t.unit) g.units[t.unit] = (g.units[t.unit] || 0) + q;
+    if (q > 0 && r > 0 && t.unit) {
+      const x = g.rated[t.unit] || (g.rated[t.unit] = { n: 0, qty: 0, amt: 0, min: Infinity, max: -Infinity, first: null, last: null });
+      x.n++; x.qty += q; x.amt += a; x.min = Math.min(x.min, r); x.max = Math.max(x.max, r);
+      if (!x.first) x.first = { r, d: t.date }; x.last = { r, d: t.date };
     }
-    if (p.udhaar > 0) lines.push(`<div class="rrow"><div class="k">👷 ${tr('Side work udhaar', 'Side kaam udhaar')}<small>${p.udhaarN} ${tr('entries', 'entries')}</small></div><div class="v" style="color:#8a6100">${inr(p.udhaar)}</div></div>`);
-    else if (p.settled > 0) lines.push(`<div class="rrow"><div class="k">👷 ${tr('Side work udhaar', 'Side kaam udhaar')}</div><div class="v" style="color:#1f7a4d">${tr('Settled', 'Chuk gaya')} ✅</div></div>`);
-    return `<div class="report-card tap" data-party="${esc(p.key)}"><h4>${esc(p.name)}</h4>${lines.join('')}</div>`;
+  }
+  return Object.values(map).map((g) => {
+    const u = Object.keys(g.rated).sort((a, b) => g.rated[b].n - g.rated[a].n)[0];
+    if (u) { const x = g.rated[u], per = PER_1000_UNITS.includes(u); g.rate = { unit: u, per1000: per, avg: x.qty ? x.amt / x.qty * (per ? 1000 : 1) : 0, min: x.min, max: x.max, first: x.first, last: x.last, n: x.n }; }
+    return g;
+  }).sort((a, b) => b.amount - a.amount);
+}
+function reportItem(inR) {
+  const rows = itemStats(inR);
+  const sub = (g) => {
+    const lines = [esc([fmtUnits(g.units), g.count + ' ' + tr('entries', 'entries')].filter(Boolean).join(' · '))];
+    if (g.rate) {
+      const r = g.rate, unit = r.per1000 ? '/1000' : '/' + r.unit;
+      lines.push(esc(`${tr('avg', 'avg')} ${inr(Math.round(r.avg))}${unit}` + (r.n > 1 && r.min !== r.max ? ` · ${inr(r.min)}–${inr(r.max)}` : '')));
+      if (r.n > 1 && r.first.r !== r.last.r) {
+        const up = r.last.r > r.first.r;
+        lines.push(`<span style="color:${up ? '#c0392b' : '#1f7a4d'}">${up ? '↑' : '↓'} ${esc(inr(r.first.r) + ' (' + fmtDate(r.first.d) + ') → ' + inr(r.last.r) + ' (' + fmtDate(r.last.d) + ')')}</span>`);
+      }
+    }
+    return lines.join('<br>');
   };
+  return reportList('🧱 ' + tr('Item-wise (material/labour)', 'Item-wise (material/labour)'), rows, (r) => ({ type: 'Out', item: r.key }), { sub, bar: true }) +
+    `<div class="muted" style="margin:-4px 4px 12px">${tr('Theka payments are not items — see Khata. Rate trend uses entries that have qty × rate.', 'Theka payment item nahi hai — Khata me dekho. Rate/trend sirf qty × rate wali entries se.')}</div>`;
+}
+function reportMonth(inR) {
+  const map = {};
+  for (const t of state.transactions) {
+    if (t.type !== 'Out' || !inR(t) || !t.date) continue;
+    const m = t.date.slice(0, 7), g = map[m] || (map[m] = { total: 0, build: 0, n: 0, cats: {} });
+    const a = Number(t.amount) || 0; g.total += a; g.n++; if (isBuildOut(t)) g.build += a;
+    const c = t.category || '—'; g.cats[c] = (g.cats[c] || 0) + a;
+  }
+  const months = Object.keys(map).sort().reverse();
+  if (!months.length) return `<div class="report-card"><div class="muted">${tr('Nothing in this range', 'Is range me kuch nahi')}</div></div>`;
+  const max = Math.max(1, ...months.map((m) => map[m].total));
+  return `<div class="report-card list-card"><h4>📅 ${tr('Month-wise spend', 'Mahine-wise kharcha')}<span class="h4-sub">${months.length}</span></h4><div class="rl-rows">${months.map((m) => {
+    const g = map[m], y = +m.slice(0, 4), mo = +m.slice(5, 7) - 1, b = monthBounds(y, mo);
+    const top = Object.entries(g.cats).sort((a, c) => c[1] - a[1]).slice(0, 2).map(([c, v]) => `${c} ${inrShort(v)}`).join(' · ');
+    const personal = g.total - g.build;
+    return `<div class="rli tap" data-f="${esc(JSON.stringify({ range: 'custom', from: b.from, to: b.to }))}" tabindex="0" role="button"><div class="rrow"><div class="k">${esc(monthShort(mo) + ' ' + y)}<small>${esc(g.n + ' ' + tr('entries', 'entries') + ' · ' + top + (personal > 0 ? ' · ' + tr('incl. Personal ', 'Personal ') + inrShort(personal) : ''))}</small></div><div class="v">${inr(g.total)}<span class="chev">›</span></div></div>
+      <div class="bar red"><span style="width:${Math.round(g.total / max * 100)}%"></span></div></div>`;
+  }).join('')}</div></div>`;
+}
+
+/* ========================== SCREEN: KHATA (party = khata) ========================= */
+// Har party (thekedar / vendor / supplier) ka ek jagah hisaab. Theka alag, side kaam ka udhaar alag.
+function khataData() {
+  return parties().map((p) => {
+    const L = partyLedger(p);
+    const st = p.contracts.map((c) => thekaStatus(c));
+    const cats = new Set(L.map((t) => t.category || ''));
+    let last = '';
+    for (const t of L) if ((t.date || '') > last) last = t.date;
+    for (const c of p.contracts) if ((c.start_date || '') > last) last = c.start_date;
+    return Object.assign(p, {
+      ledger: L, n: L.length, last,
+      paid: L.filter((t) => t.payment_mode !== 'Udhaar').reduce((s, t) => s + (Number(t.amount) || 0), 0),
+      st, thekaBaaki: st.filter((s) => s.kind === 'baaki').reduce((s, x) => s + x.diff, 0),
+      supplier: !p.contracts.length && cats.size === 1 && cats.has('Material')
+    });
+  }).sort((a, b) => (b.last || '').localeCompare(a.last || '') || a.name.localeCompare(b.name));
+}
+const KHATA_TABS = [['all', 'All', 'Sab'], ['baaki', 'To pay', 'Dena baaki'], ['udhaar', 'Udhaar', 'Udhaar'], ['theka', 'Theka', 'Theka'], ['supplier', 'Supplier', 'Supplier']];
+function khataMatch(p, tab) {
+  if (tab === 'baaki') return p.udhaar > 0 || p.thekaBaaki > 0;
+  if (tab === 'udhaar') return p.udhaar > 0;
+  if (tab === 'theka') return p.contracts.length > 0;
+  if (tab === 'supplier') return p.supplier;
+  return true;
+}
+function khataRow(p) {
+  const tags = [];
+  if (p.udhaar > 0) tags.push(`<span class="tag udhaar">udhaar ${inr(p.udhaar)}</span>`);
+  for (const s of p.st) {
+    if (s.kind === 'baaki') tags.push(`<span class="tag red">${tr('theka left', 'theka baaki')} ${inr(s.diff)}</span>`);
+    else if (s.kind === 'advance') tags.push(`<span class="tag blue">advance ${inr(s.diff)}</span>`);
+    else if (s.kind === 'done') tags.push(`<span class="tag">${tr('theka', 'theka')} ${tr('fully paid', 'pura')} ✅</span>`);
+    else if (s.kind === 'ratewise') tags.push(`<span class="tag blue">${tr('rate-wise theka', 'rate-wise theka')}</span>`);
+    else tags.push(`<span class="tag amber">${tr('set theka amount', 'theka amount daalo')}</span>`);
+  }
+  if (!p.contracts.length && !p.udhaar && p.settled > 0) tags.push(`<span class="tag">udhaar ${tr('settled', 'chuk gaya')} ✅</span>`);
+  return `<div class="krow tap" data-party="${esc(p.key)}" tabindex="0" role="button">
+    <div class="k-main"><div class="k-name ud">${esc(p.name)}</div>
+      ${tags.length ? `<div class="k-tags">${tags.join('')}</div>` : ''}
+      <div class="k-sub">${p.n} ${tr('entries', 'entries')} · ${inr(p.paid)} ${tr('paid', 'diya')}${p.last ? ' · ' + esc(fmtDate(p.last)) : ''}</div></div>
+    <div class="k-arrow">›</div></div>`;
+}
+let khTimer = null;
+function screenTheka() {
+  const ps = khataData();
+  const udTotal = pendingUdhaar().reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const thekaBaaki = state.contracts.map(thekaStatus).filter((s) => s.kind === 'baaki').reduce((s, x) => s + x.diff, 0);
+  const tab = state.khataTab || 'all';
   const html = `
     <div class="screen">
       <h2 class="title">${tr('Khata (party-wise)', 'Khata (party-wise hisaab)')}</h2>
-      <p class="muted" style="margin:-6px 2px 12px">${tr('Theka and side-work udhaar are kept separate. Tap a party for full hisaab and to settle udhaar.', 'Theka aur side kaam ka udhaar alag-alag. Party pe tap karo — poora hisaab + udhaar chukao.')}</p>
-      <button class="btn-secondary" id="add-theka" style="width:100%;margin-bottom:12px">➕ ${tr('New Theka', 'Naya Theka')}</button>
-      <div class="list">${ps.length ? ps.map(card).join('') : emptyState(tr('No theka or udhaar yet.', 'Abhi koi theka ya udhaar nahi.'))}</div>
+      <div class="due-card tap" id="k-due" tabindex="0" role="button">
+        <div class="due-l">${tr('Total to pay', 'Kul dena baaki')}</div>
+        <div class="due-v">${inr(udTotal + thekaBaaki)}</div>
+        <div class="due-s">${tr('Udhaar', 'Udhaar')} ${inr(udTotal)} · ${tr('Theka left', 'Theka baaki')} ${inr(thekaBaaki)} <span class="muted">(${tr('advances not counted', 'advance nahi gina')})</span></div>
+      </div>
+      <div class="toolbar"><input id="k-q" type="search" autocomplete="off" placeholder="🔍 ${tr('Search party', 'Party dhoondo')}" value="${esc(state.khataQ || '')}" />
+        <button type="button" class="btn-secondary" id="add-theka">➕ ${tr('Theka', 'Theka')}</button></div>
+      <div class="filter-chips" id="k-chips">${KHATA_TABS.map(([k, en, hi]) => `<button type="button" class="chip sm ${tab === k ? 'active' : ''}" data-k="${k}">${tr(en, hi)} <span class="cn">${ps.filter((p) => khataMatch(p, k)).length}</span></button>`).join('')}</div>
+      <div class="list k-list" id="k-list"></div>
+      <p class="muted" style="margin:12px 2px 0">${tr('Theka and side-work udhaar are kept separate. Tap a party for the full ledger, payments, udhaar settle and WhatsApp hisaab.', 'Theka aur side kaam ka udhaar alag-alag. Party pe tap karo — poora ledger, payment, udhaar chukao, WhatsApp hisaab.')}</p>
     </div>`;
   const bind = () => {
+    const renderList = () => {
+      const q = nameKey(state.khataQ || ''), t = state.khataTab || 'all';
+      const rows = ps.filter((p) => khataMatch(p, t) && (!q || p.key.includes(q)));
+      $('#k-list').innerHTML = rows.length ? rows.map(khataRow).join('') : emptyState(tr('No party found', 'Koi party nahi mili'));
+      $('#k-list').querySelectorAll('[data-party]').forEach((el) => el.onclick = () => openParty(el.dataset.party));
+    };
     $('#add-theka').onclick = () => openThekaForm();
-    $('#screen').querySelectorAll('[data-party]').forEach((el) => el.onclick = () => openParty(el.dataset.party));
+    $('#k-due').onclick = () => { state.khataTab = 'baaki'; $('#k-chips').querySelectorAll('.chip').forEach((x) => x.classList.toggle('active', x.dataset.k === 'baaki')); renderList(); };
+    $('#k-chips').querySelectorAll('.chip').forEach((c) => c.onclick = () => { state.khataTab = c.dataset.k; $('#k-chips').querySelectorAll('.chip').forEach((x) => x.classList.toggle('active', x === c)); renderList(); });
+    $('#k-q').oninput = (e) => { clearTimeout(khTimer); const v = e.target.value; khTimer = setTimeout(() => { state.khataQ = v; renderList(); }, 150); };
+    renderList();
   };
   return { html, bind };
 }
@@ -1007,16 +1594,29 @@ function openParty(key) {
   // Theka ka diya theke ke link se (vendor naam kuch bhi likha ho) — Theka screen jaisa hi number
   const thekaPaid = p.contracts.reduce((s, c) => s + contractPaid(c.id), 0);
   const otherPaid = all.filter((t) => t.payment_mode !== 'Udhaar' && !(t.category === 'Theka Payment' && thekaIds.has(t.contract_id))).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  // Poora ledger (purana → naya running total of diya); dikhate naya pehle
+  const L = partyLedger(p).sort(sortOldFirst);
+  let run = 0; const runMap = {};
+  for (const t of L) { if (t.payment_mode !== 'Udhaar') run += Number(t.amount) || 0; runMap[t.id] = run; }
   const inner = `
-    <h3>📒 ${esc(p.name)}</h3>
+    <h3>📒 <span class="ud">${esc(p.name)}</span></h3>
+    <div class="party-head">
+      <div><b>${inr(thekaPaid + otherPaid)}</b><small>${tr('paid', 'kul diya')}</small></div>
+      <div><b style="color:${p.udhaar > 0 ? '#8a6100' : 'inherit'}">${inr(p.udhaar)}</b><small>${tr('udhaar pending', 'udhaar baaki')}</small></div>
+      <div><b>${L.length}</b><small>${tr('entries', 'entries')}</small></div>
+    </div>
+    <div class="party-actions">
+      <button class="btn-primary" id="p-pay">➕ ${tr('Pay', 'Payment do')}</button>
+      <div class="row2"><button class="btn-secondary" id="p-entries">📜 ${tr('See in Entries', 'Entries mein dekho')}</button><button class="btn-secondary" id="p-wa">📤 ${tr('Send on WhatsApp', 'WhatsApp pe hisaab')}</button></div>
+    </div>
     ${p.contracts.map((c) => { const s = thekaStatus(c), sl = thekaStatusLine(s); return `<div class="report-card">
-      <h4>🤝 ${tr('Theka', 'Theka')}${c.kaam ? ' — ' + esc(c.kaam) : ''}</h4>
+      <h4>🤝 ${tr('Theka', 'Theka')}${c.kaam ? ' — <span class="ud">' + esc(c.kaam) + '</span>' : ''}</h4>
       ${sqftLabel(c.notes) ? `<div class="muted" style="margin:-4px 0 6px">📐 ${esc(sqftLabel(c.notes))}</div>` : ''}
       <div class="rrow"><div class="k">${tr('Theka amount', 'Theka amount')}</div><div class="v">${s.amt ? inr(s.amt) : '—'}</div></div>
       <div class="rrow"><div class="k">${tr('Paid', 'Diya')}</div><div class="v" style="color:#1f7a4d">${inr(s.paid)}</div></div>
       <div class="rrow"><div class="k">${esc(sl.k)}</div><div class="v" style="color:${sl.color}">${esc(sl.v)}</div></div>
       ${(() => { const rl = parseRates(c.notes); if (!rl.length) return ''; return `<div class="section-label" style="margin-top:12px">${tr('Rate list', 'Rate list')}</div>` +
-        rl.map((l) => `<div class="rrow"><div class="k">${esc(l.n)}<small>${inr(l.r)} ${esc(RATE_UNITS[l.u] || '')}${Number(l.q) ? ' × ' + l.q : ''}</small></div><div class="v">${Number(l.q) ? inr(rateLineAmt(l)) : '<span class="muted">' + tr('pending', 'baaki') + '</span>'}</div></div>`).join('') +
+        rl.map((l) => `<div class="rrow"><div class="k"><span class="ud">${esc(l.n)}</span><small>${inr(l.r)} ${esc(RATE_UNITS[l.u] || '')}${Number(l.q) ? ' × ' + esc(l.q) : ''}</small></div><div class="v">${Number(l.q) ? inr(rateLineAmt(l)) : '<span class="muted">' + tr('pending', 'baaki') + '</span>'}</div></div>`).join('') +
         (ratesTotal(rl) ? `<div class="total-line"><span>${tr('Measured total', 'Measurement total')}</span><span>${inr(ratesTotal(rl))}</span></div>` : ''); })()}
       ${s.kind === 'advance' ? `<div class="muted" style="margin-top:6px">${tr('Paid more than current theka amount — normal if more work/measurement is still to be added. Update the theka amount after measurement.', 'Theka amount se zyada diya — normal hai agar aur kaam/measurement abhi add hona hai. Measurement ke baad theka amount update kar dena.')}</div>` : ''}
       <button class="btn-secondary" data-edit-theka="${esc(c.id)}" style="width:100%;margin-top:10px">✏️ ${tr('Edit theka / measurement', 'Theka / measurement edit')}</button>
@@ -1028,18 +1628,98 @@ function openParty(key) {
       ${pend.length ? `<button class="btn-primary" id="bulk-settle">💸 ${tr('Settle udhaar', 'Udhaar chukao')} (${inr(p.udhaar)})</button>` : ''}
     </div>` : ''}
     <div class="report-card">
-      <h4>🧮 ${tr('Total paid to', 'Kul diya')} ${esc(p.name)}</h4>
+      <h4>🧮 ${tr('Total paid to', 'Kul diya')} <span class="ud">${esc(p.name)}</span></h4>
       ${p.contracts.length ? `<div class="rrow"><div class="k">${tr('Theka payments', 'Theka payments')}</div><div class="v">${inr(thekaPaid)}</div></div>` : ''}
       <div class="rrow"><div class="k">${tr('Other payments (side work, material…)', 'Baaki payments (side kaam, material…)')}</div><div class="v">${inr(otherPaid)}</div></div>
       <div class="total-line"><span>${tr('Total', 'Total')}</span><span>${inr(thekaPaid + otherPaid)}</span></div>
     </div>
-    ${pend.length ? `<div class="section-label">${tr('Pending udhaar entries', 'Baaki udhaar entries')}</div><div class="list" id="party-pend">${pend.slice().reverse().map(entryRow).join('')}</div>` : ''}
+    ${L.length ? `<div class="section-label ledger-h"><span>📜 ${tr('Full ledger (newest first)', 'Poora hisaab (naya pehle)')}</span>
+      <span class="seg-toggle" id="led-tabs"><button type="button" class="on" data-l="all">${tr('All', 'Sab')}</button>${pend.length ? `<button type="button" data-l="ud">Udhaar</button>` : ''}</span></div>
+      <div class="muted" style="margin:-4px 2px 8px">∑ = ${tr('total paid up to that entry (udhaar not counted until settled)', 'us entry tak kul diya (udhaar chukne tak nahi gina)')}</div>
+      <div class="day-card" id="party-ledger">${L.slice().reverse().map((t) => entryRow(t, { running: runMap[t.id] })).join('')}</div>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Close', 'Band karo')}</button>`;
   openSheet(inner, (root) => {
     root.querySelector('#cancel').onclick = closeSheet;
     root.querySelectorAll('[data-edit-theka]').forEach((b) => b.onclick = () => { const c = state.contracts.find((x) => x.id === b.dataset.editTheka); closeSheet(); if (c) openThekaForm(c); });
     const bs = root.querySelector('#bulk-settle'); if (bs) bs.onclick = () => { closeSheet(); openBulkSettle(key); };
-    const pl = root.querySelector('#party-pend'); if (pl) bindEntryRows(pl);
+    const pl = root.querySelector('#party-ledger'); if (pl) bindEntryRows(pl);
+    const lt = root.querySelector('#led-tabs');
+    if (lt) lt.querySelectorAll('button').forEach((b) => b.onclick = () => {
+      lt.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+      pl.querySelectorAll('.entry').forEach((e) => e.classList.toggle('hidden', b.dataset.l === 'ud' && !e.dataset.ud));
+    });
+    root.querySelector('#p-pay').onclick = () => {
+      closeSheet();
+      const c = p.contracts.length ? pickContract(p.contracts) : null;
+      const pp = partyProfile(p.name);
+      openOutForm(null, { vendor: p.name, mode: 'Cash', category: c ? 'Theka Payment' : ((pp && pp.topCat) || undefined), contract_id: c ? c.id : null });
+    };
+    root.querySelector('#p-entries').onclick = () => { closeSheet(); openEntriesWith({ party: p.name }); };
+    root.querySelector('#p-wa').onclick = () => openWhatsAppSummary(p);
+  });
+}
+
+// WhatsApp pe hisaab: sirf text banta hai, user dekh/badal sakta hai, phir wa.me khulta hai. App khud kuch nahi bhejta.
+function partySummaryText(p) {
+  const out = [];
+  out.push(`*${p.name} — ${tr('Account statement', 'Hisaab')}*`);
+  out.push(`${tr('As on', 'Tareekh')}: ${fmtDate(today())}`);
+  let thekaBaaki = 0;
+  for (const c of p.contracts) {
+    const s = thekaStatus(c), sl = thekaStatusLine(s);
+    out.push(''); out.push(`🤝 ${tr('Theka', 'Theka')}${c.kaam ? ': ' + c.kaam : ''}`);
+    if (s.amt) out.push(`${tr('Theka amount', 'Theka amount')}: ${inr(s.amt)}`);
+    const sq = sqftLabel(c.notes); if (sq) out.push(`${tr('Measurement', 'Measurement')}: ${sq}`);
+    const rl = parseRates(c.notes);
+    if (rl.length) {
+      out.push(tr('Rate list:', 'Rate list:'));
+      for (const l of rl) out.push(`• ${l.n}: ${inr(l.r)} ${RATE_UNITS[l.u] || ''}${Number(l.q) ? ' × ' + l.q + ' = ' + inr(rateLineAmt(l)) : ''}`);
+      if (ratesTotal(rl)) out.push(`${tr('Measured total', 'Measurement total')}: ${inr(ratesTotal(rl))}`);
+    }
+    out.push(`${tr('Paid on theka', 'Theke pe diya')}: ${inr(s.paid)}`);
+    out.push(`${sl.k}: ${sl.v}`);
+    if (s.kind === 'baaki') thekaBaaki += s.diff;
+  }
+  const L = partyLedger(p).sort(sortOldFirst);
+  const paid = L.filter((t) => t.payment_mode !== 'Udhaar');
+  const paidSum = paid.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  if (paid.length) {
+    out.push(''); out.push(`💸 ${tr('Payments', 'Payments')} (${paid.length}):`);
+    const MAX = 40;
+    if (paid.length > MAX) out.push(`… ${paid.length - MAX} ${tr('older payments', 'purani payments')} ${inr(paid.slice(0, paid.length - MAX).reduce((s, t) => s + (Number(t.amount) || 0), 0))}`);
+    for (const t of paid.slice(-MAX)) {
+      const what = t.category === 'Theka Payment' ? tr('Theka', 'Theka') : (t.item || t.category || '');
+      out.push(`• ${fmtDate(t.date)} — ${inr(t.amount)}${t.payment_mode ? ' (' + t.payment_mode + ')' : ''}${what ? ' · ' + what : ''}`);
+    }
+    out.push(`${tr('Total paid', 'Kul diya')}: ${inr(paidSum)}`);
+  }
+  const pend = pendingUdhaar(p.key), udSum = pend.reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  if (pend.length) {
+    out.push(''); out.push(`👷 ${tr('Side work udhaar pending', 'Side kaam udhaar baaki')} (${pend.length}):`);
+    for (const t of pend.slice(-30)) out.push(`• ${fmtDate(t.date)} — ${[t.item || t.category, fmtQtyRate(t)].filter(Boolean).join(' ')} = ${inr(t.amount)}`);
+    out.push(`${tr('Udhaar total', 'Udhaar total')}: ${inr(udSum)}`);
+  }
+  out.push('');
+  const due = thekaBaaki + udSum;
+  out.push(due > 0 ? `*${tr('Total to pay', 'Kul dena baaki')}: ${inr(due)}*` : `*${tr('Nothing pending', 'Kuch baaki nahi')} ✅*`);
+  return out.join('\n');
+}
+function openWhatsAppSummary(p) {
+  const text = partySummaryText(p);
+  const inner = `
+    <h3>📤 ${tr('WhatsApp hisaab', 'WhatsApp pe hisaab')} — <span class="ud">${esc(p.name)}</span></h3>
+    <p class="muted" style="margin:0 2px 8px">${tr('Check or edit the text. WhatsApp opens — choose the contact there.', 'Text dekh lo / badal lo. WhatsApp khulega — wahan contact chuno.')}</p>
+    <div class="field"><textarea id="wa-text" class="wa-text">${esc(text)}</textarea></div>
+    <button class="btn-primary" id="wa-send">📤 ${tr('Open WhatsApp', 'WhatsApp kholo')}</button>
+    <div class="row2" style="margin-top:8px"><button class="btn-secondary" id="wa-copy">📋 ${tr('Copy', 'Copy karo')}</button><button class="btn-ghost" id="cancel" style="margin-top:0">${tr('Close', 'Band karo')}</button></div>`;
+  openSheet(inner, (root) => {
+    const ta = root.querySelector('#wa-text');
+    root.querySelector('#cancel').onclick = closeSheet;
+    root.querySelector('#wa-send').onclick = () => { window.open('https://wa.me/?text=' + encodeURIComponent(ta.value), '_blank'); };
+    root.querySelector('#wa-copy').onclick = async () => {
+      try { await navigator.clipboard.writeText(ta.value); toast(tr('Copied', 'Copy ho gaya')); }
+      catch (_) { ta.select(); try { document.execCommand('copy'); toast(tr('Copied', 'Copy ho gaya')); } catch (e) { toast(tr('Copy failed — select and copy', 'Copy nahi hua — select karke copy karo'), true); } }
+    };
   });
 }
 
@@ -1148,7 +1828,7 @@ function screenSettings() {
       const a = state.accounts.find((x) => x.id === el.dataset.acc); if (a) openAccountForm(a);
     });
     $('#exp-json').onclick = exportJSON;
-    $('#exp-csv').onclick = exportCSV;
+    $('#exp-csv').onclick = () => exportCSV();
     $('#sync-now').onclick = async () => { toast(tr('Syncing…', 'Sync…')); await flushQueue(); await loadAll(); refresh(); toast(tr('Done', 'Ho gaya')); };
     $('#activity-log').onclick = openActivityLog;
     $('#import-btn').onclick = openImportForm;
@@ -1201,18 +1881,37 @@ function setChip(root, name, value) { const w = root.querySelector(`[data-chips=
 function accOptions(selId) { return state.accounts.map((a) => `<option value="${a.id}" ${a.id === selId ? 'selected' : ''}>${esc(a.name)}</option>`).join(''); }
 
 /* ====================== FORM: Kharcha (Out) ====================== */
-function openOutForm(existing) {
+// Order: Amount → Kise diya (party) → Category → Item → Mode → Date. Qty × Rate, note, account "+ Aur" me.
+// Party chunte hi smart defaults (sirf pre-fill; jo user ne khud chhua wo kabhi nahi badalta).
+// preset (naya entry): { vendor, category, contract_id, mode, account, date, next }
+function openOutForm(existing, preset) {
+  preset = preset || {};
   // isEdit = sach me purani saved entry (Repeat me clone ka naya id hota hai → new entry)
   const isEdit = !!(existing && state.transactions.some((x) => x.id === existing.id));
+  const fromExisting = !!existing;
   const md = catDefault('Material') || {};
   const defMode = (md.mode && md.mode !== 'Udhaar') ? md.mode : 'Cash';
+  const pMode = preset.mode && PAY_MODES.includes(preset.mode) ? preset.mode : null;
+  const mode0 = pMode || defMode;
   // Account mode se aayega (Cash mode -> Cash account), last-used se nahi — warna ek Bank entry sabko Bank bana deti thi
-  const t = existing || { id: uid(), type: 'Out', date: today(), category: 'Material', payment_mode: defMode, account_id: accountForMode(defMode, md.acc) || (state.accounts[0] || {}).id };
+  const t = existing || {
+    id: uid(), type: 'Out', date: preset.date || today(), category: preset.category || 'Material', payment_mode: mode0,
+    account_id: accountForMode(mode0, preset.account || md.acc) || (state.accounts[0] || {}).id,
+    vendor: preset.vendor || null, contract_id: preset.contract_id || null
+  };
   const itemsDL = 'dl-items';
   // Purani entry ka unit agar list me na ho to bhi use option me rakho (warna save par chup-chaap badal jata)
   const unitOpts = (t.unit && !UNITS.includes(t.unit)) ? [t.unit, ...UNITS] : UNITS;
   const inner = `
-    <h3>${isEdit ? tr('✏️ Edit expense', '✏️ Kharcha edit') : tr('➖ New Expense', '➖ Naya Kharcha')}</h3>
+    <h3>${isEdit ? tr('✏️ Edit expense', '✏️ Kharcha edit') : preset.next ? tr('➖ Next expense', '➖ Agla kharcha') : tr('➖ New Expense', '➖ Naya Kharcha')}</h3>
+    ${preset.next ? `<div class="next-note">✅ ${tr('Saved. Same party, date & mode kept — just enter the amount.', 'Save ho gaya. Party, date aur mode wahi hai — bas amount daalo.')}</div>` : ''}
+    <div class="field amt-field"><label>${tr('Amount ₹', 'Amount ₹ (kitna diya)')}</label><input id="f-amount" class="big-amt" type="text" inputmode="decimal" autocomplete="off" value="${t.amount ?? ''}" placeholder="₹ 0" /><div class="amt-preview" id="amt-prev"></div></div>
+
+    <div class="field"><label>${tr('Paid to (party)', 'Kise diya (party)')}</label><input id="f-vendor" list="dl-vendor" autocomplete="off" autocapitalize="words" value="${esc(t.vendor || '')}" placeholder="${tr('shop / person name', 'dukaan / aadmi ka naam')}" />
+      <datalist id="dl-vendor">${allVendors().map((v) => `<option>${esc(v)}</option>`).join('')}</datalist>
+      <div class="chips recent" id="rc-vendors"></div></div>
+    <div id="theka-hint" class="hint-card hidden"></div>
+
     <div class="field"><label>${tr('Category', 'Category')}</label>
       <div class="chips" data-chips="cat" id="cat-chips"></div>
       <div id="cat-new" class="hidden" style="display:flex;gap:8px;margin-top:8px">
@@ -1223,87 +1922,142 @@ function openOutForm(existing) {
 
     <div id="item-block">
       <div class="field"><label>${tr('Item / Work', 'Item / Kaam')}</label>
-        <input id="f-item" list="${itemsDL}" value="${esc(t.item || '')}" placeholder="${tr('e.g. Cement, Sariya, Kade, Taar…', 'jaise Cement, Sariya, Kade, Taar…')}" />
+        <input id="f-item" list="${itemsDL}" autocomplete="off" value="${esc(t.item || '')}" placeholder="${tr('e.g. Cement, Sariya, Kade, Taar…', 'jaise Cement, Sariya, Kade, Taar…')}" />
         <datalist id="${itemsDL}"></datalist>
         <div class="chips recent" id="rc-items"></div>
-      </div>
-      <div class="row3">
-        <div class="field"><label id="qty-label">${tr('Qty', 'Qty')}</label><input id="f-qty" type="text" inputmode="decimal" value="${t.qty ?? ''}" placeholder="0" /></div>
-        <div class="field"><label>${tr('Unit', 'Unit')}</label><select id="f-unit">${unitOpts.map((u) => `<option ${u === t.unit ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
-        <div class="field"><label id="rate-label">${tr('Rate ₹', 'Rate ₹')}</label><input id="f-rate" type="text" inputmode="decimal" value="${t.rate ?? ''}" placeholder="0" /></div>
       </div>
     </div>
 
     <div id="theka-block" class="field hidden"><label>${tr('Which theka payment', 'Kis theke ka payment')}</label>
-      <select id="f-contract"><option value="">${tr('— Choose theka —', '— Theka chuno —')}</option>${state.contracts.map((c) => `<option value="${c.id}" ${c.id === t.contract_id ? 'selected' : ''}>${esc(c.thekedar_name || c.kaam || tr('Theka', 'Theka'))}</option>`).join('')}</select>
+      <select id="f-contract"><option value="">${tr('— Choose theka —', '— Theka chuno —')}</option>${state.contracts.map((c) => `<option value="${esc(c.id)}" ${c.id === t.contract_id ? 'selected' : ''}>${esc(c.thekedar_name || c.kaam || tr('Theka', 'Theka'))}${c.kaam && c.thekedar_name ? ' — ' + esc(c.kaam) : ''}</option>`).join('')}</select>
     </div>
-
-    <div class="field"><label>${tr('Amount ₹ (total)', 'Amount ₹ (kul)')}</label><input id="f-amount" type="text" inputmode="decimal" value="${t.amount ?? ''}" placeholder="0" /><div class="amt-preview" id="amt-prev"></div></div>
-
-    <div class="field"><label>${tr('From / to whom (vendor)', 'Kisse aaya / kise diya (vendor)')}</label><input id="f-vendor" list="dl-vendor" value="${esc(t.vendor || '')}" placeholder="${tr('shop / person name', 'dukaan / aadmi ka naam')}" />
-      <datalist id="dl-vendor">${allVendors().map((v) => `<option>${esc(v)}</option>`).join('')}</datalist>
-      <div class="chips recent" id="rc-vendors"></div></div>
 
     <div class="field"><label>${tr('Payment mode', 'Payment mode')}</label>${chipsHtml('mode', PAY_MODES, t.payment_mode)}</div>
+    ${dateFieldHtml('f-date', t.date)}
 
-    <button type="button" class="more-toggle" id="more-toggle">+ ${tr('Add details (account, date, note)', 'Aur details (account, date, note)')}</button>
+    <button type="button" class="more-toggle" id="more-toggle"></button>
     <div id="more-block" class="hidden">
-      <div class="field" id="account-field"><label>${tr('Paid from (account)', 'Paisa kahan se gaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
-      <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
+      <div class="row3" id="qty-block">
+        <div class="field"><label id="qty-label">${tr('Qty', 'Qty')}</label><input id="f-qty" type="text" inputmode="decimal" value="${t.qty ?? ''}" placeholder="0" /></div>
+        <div class="field"><label>${tr('Unit', 'Unit')}</label><select id="f-unit">${unitOpts.map((u) => `<option ${u === t.unit ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
+        <div class="field"><label id="rate-label">${tr('Rate ₹', 'Rate ₹')}</label><input id="f-rate" type="text" inputmode="decimal" value="${t.rate ?? ''}" placeholder="0" /></div>
+      </div>
       <div class="field"><label>${tr('Note (optional)', 'Note (optional)')}</label><textarea id="f-notes" placeholder="${tr('any detail…', 'koi detail…')}">${esc(cleanNote(t.notes))}</textarea></div>
+      <div class="field" id="account-field"><label>${tr('Paid from (account)', 'Paisa kahan se gaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
     </div>
 
-    <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
+    <div class="save-row"><button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>${isEdit ? '' : `<button class="btn-primary next" id="save-next">💾 ${tr('Save + next', 'Save + agla')}</button>`}</div>
     ${isEdit ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>
   `;
   openSheet(inner, (root) => {
-    let renderRecentItems = () => {};   // niche assign hota hai; cat-chip onclick isse call karta hai
+    const isPaymentCat = (cat) => cat === 'Theka Payment' || cat === 'Architect';   // seedha payment (item/qty/rate nahi)
+    let renderRecentItems = () => {};   // niche assign hota hai
+    // User ne khud kya chhua? Smart defaults sirf un-chhue fields bharte hain.
+    let catTouched = fromExisting || !!preset.category, itemTouched = fromExisting, itemAuto = false;
+    let modeTouched = fromExisting || !!pMode, accountTouched = isEdit;
+    const vendorEl = root.querySelector('#f-vendor'), itemEl = root.querySelector('#f-item'), unitEl = root.querySelector('#f-unit');
+    const contractSel = root.querySelector('#f-contract'), hintEl = root.querySelector('#theka-hint');
+    const moreBlock = root.querySelector('#more-block'), moreToggle = root.querySelector('#more-toggle');
+    const moreOpen = () => !moreBlock.classList.contains('hidden');
+    const setMoreLabel = () => {
+      const pay = isPaymentCat(chipVal(root, 'cat'));
+      moreToggle.textContent = (moreOpen() ? '− ' : '+ ') + (pay ? tr('More: note, account', 'Aur: note, account') : tr('More: qty × rate, note, account', 'Aur: qty × rate, note, account'));
+    };
     const updItems = (cat) => { root.querySelector('#' + itemsDL).innerHTML = itemSuggestions(cat).map((i) => `<option>${esc(i)}</option>`).join(''); };
     const toggleBlocks = (cat) => {
-      const isTheka = cat === 'Theka Payment';
-      const isPayment = isTheka || cat === 'Architect';   // Architect bhi seedha payment (item/qty/rate nahi)
-      root.querySelector('#item-block').classList.toggle('hidden', isPayment);
-      root.querySelector('#theka-block').classList.toggle('hidden', !isTheka);
+      const pay = isPaymentCat(cat);
+      root.querySelector('#item-block').classList.toggle('hidden', pay);
+      root.querySelector('#qty-block').classList.toggle('hidden', pay);
+      root.querySelector('#theka-block').classList.toggle('hidden', cat !== 'Theka Payment');
+      setMoreLabel();
     };
-    // Custom categories: chips + "Naya" inline add (naya person/service)
-    const catNew = root.querySelector('#cat-new'), catNewIn = root.querySelector('#cat-new-input');
-    const renderCatChips = (selected) => {
-      const wrap = root.querySelector('#cat-chips');
-      wrap.innerHTML = allCats().map((c) => `<button type="button" class="chip ${c === selected ? 'active' : ''}" data-val="${esc(c)}">${esc(c)}</button>`).join('')
-        + `<button type="button" class="chip cat-add" id="cat-add">+ ${tr('New', 'Naya')}</button>`;
-      wrap.querySelectorAll('.chip[data-val]').forEach((c) => c.onclick = () => { catNew.classList.add('hidden'); renderCatChips(c.dataset.val); updItems(c.dataset.val); toggleBlocks(c.dataset.val); if (!isEdit) applyCatDefault(c.dataset.val); renderRecentItems(c.dataset.val); applyItemUnit(); });
-      root.querySelector('#cat-add').onclick = () => { catNew.classList.remove('hidden'); catNewIn.value = ''; catNewIn.focus(); };
-    };
-    const addCat = () => {
-      const name = catNewIn.value.trim(); if (!name) return;
-      learnList('gk_categories', name); catNew.classList.add('hidden');
-      renderCatChips(name); updItems(name); toggleBlocks(name);
-    };
-    root.querySelector('#cat-new-add').onclick = addCat;
-    catNewIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addCat(); } });
-
     // Udhaar par "Paid from (account)" chhupao — abhi kisi account se paisa nahi gaya
     const toggleAccount = (mode) => { root.querySelector('#account-field').classList.toggle('hidden', mode === 'Udhaar'); };
-    // User ne khud mode/account chhua? to category badalne par unhe overwrite mat karo
-    let modeTouched = false, accountTouched = false;
     // Account ko current mode ke type se sync karo (last-used acc se nahi — Bank-trap khatam)
     const syncAccountToMode = () => {
-      if (accountTouched) return;                       // user ne khud account chuna to na chhedo
+      if (accountTouched) return;
       const sel = root.querySelector('#f-account'); if (!sel) return;
       const acc = accountForMode(chipVal(root, 'mode'), sel.value);
       if (acc) sel.value = acc;
     };
-    // Smart default: us category ka last-used mode pre-fill (Udhaar nahi). Account mode ke type se aata hai.
+    // Category ka last-used mode pre-fill (Udhaar nahi) — jab tak user ne mode na chhua ho
     const applyCatDefault = (cat) => {
       const d = catDefault(cat); if (!d) return;
       if (!modeTouched && d.mode && d.mode !== 'Udhaar') { setChip(root, 'mode', d.mode); toggleAccount(d.mode); }
       syncAccountToMode();
     };
+    // Custom categories: chips + "Naya" inline add (naya person/service)
+    const catNew = root.querySelector('#cat-new'), catNewIn = root.querySelector('#cat-new-input');
+    let selectCat = () => {};
+    const renderCatChips = (selected) => {
+      const wrap = root.querySelector('#cat-chips');
+      wrap.innerHTML = allCats().map((c) => `<button type="button" class="chip ${c === selected ? 'active' : ''}" data-val="${esc(c)}">${esc(c)}</button>`).join('')
+        + `<button type="button" class="chip cat-add" id="cat-add">+ ${tr('New', 'Naya')}</button>`;
+      wrap.querySelectorAll('.chip[data-val]').forEach((c) => c.onclick = () => { catTouched = true; catNew.classList.add('hidden'); selectCat(c.dataset.val); });
+      root.querySelector('#cat-add').onclick = () => { catNew.classList.remove('hidden'); catNewIn.value = ''; catNewIn.focus(); };
+    };
+    selectCat = (cat) => {
+      renderCatChips(cat); updItems(cat); toggleBlocks(cat);
+      if (!isEdit) applyCatDefault(cat);
+      renderRecentItems(cat); applyItemUnit(); renderHint();
+    };
+    const addCat = () => {
+      const name = catNewIn.value.trim(); if (!name) return;
+      learnList('gk_categories', name); catNew.classList.add('hidden'); catTouched = true;
+      renderCatChips(name); updItems(name); toggleBlocks(name);
+    };
+    root.querySelector('#cat-new-add').onclick = addCat;
+    catNewIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); addCat(); } });
 
-    renderCatChips(t.category);
-    updItems(t.category); toggleBlocks(t.category);
-    // Mode chuna → account us type ka set (Cash->Cash, UPI/NetBanking/Online->Bank). Yehi asli fix.
+    // Theke wali party → "Theka Payment" ka sujhav (ek tap me accept → contract_id set)
+    const renderHint = () => {
+      const pp = partyProfile(vendorEl.value);
+      const c = pp && pp.contracts.length ? pickContract(pp.contracts) : null;
+      const cat = chipVal(root, 'cat');
+      if (!c) { hintEl.className = 'hint-card hidden'; hintEl.innerHTML = ''; return; }
+      const st = thekaShortStatus(thekaStatus(c));
+      if (cat === 'Theka Payment') {
+        if (!isEdit && !contractSel.value) contractSel.value = c.id;   // naye payment me theka khud link (edit me kabhi nahi)
+        const linked = contractById(contractSel.value);
+        hintEl.className = 'hint-card ok';
+        hintEl.innerHTML = linked ? `🤝 ${tr('Theka', 'Theka')}: <b class="ud">${esc(linked.thekedar_name || '')}</b>${linked.kaam ? ' · <span class="ud">' + esc(linked.kaam) + '</span>' : ''} · ${esc(thekaShortStatus(thekaStatus(linked)))}` : `🤝 ${tr('Choose which theka below', 'Niche theka chuno')}`;
+        return;
+      }
+      if (catTouched) { hintEl.className = 'hint-card hidden'; hintEl.innerHTML = ''; return; }   // user ne khud category chuni
+      hintEl.className = 'hint-card';
+      hintEl.innerHTML = `<div>🤝 <b class="ud">${esc(pp.name)}</b> ${tr('has a running theka', 'ka theka chal raha hai')} → <b>Theka Payment</b> <span class="muted">(${esc(st)})</span></div>
+        <button type="button" class="btn-secondary sm" id="hint-accept">${tr('Yes, theka payment', 'Haan, Theka Payment')}</button>`;
+      hintEl.querySelector('#hint-accept').onclick = () => { catTouched = true; contractSel.value = c.id; selectCat('Theka Payment'); };
+    };
+    contractSel.addEventListener('change', () => {
+      // Theka chuna aur party khaali → thekedar ka naam bhar do (sirf khaali ho to)
+      const c = contractById(contractSel.value);
+      if (c && c.thekedar_name && !vendorEl.value.trim()) { vendorEl.value = c.thekedar_name; appliedKey = nameKey(c.thekedar_name); }
+      renderHint();
+    });
+
+    // Party-first smart defaults: category (sabse zyada wali), item (aakhri), mode (aakhri; Udhaar sirf agar aakhri Udhaar tha)
+    let appliedKey = (fromExisting || preset.next) ? nameKey(t.vendor) : null;
+    const applyParty = () => {
+      const k = nameKey(vendorEl.value);
+      if (k && k !== appliedKey && !fromExisting) {
+        const pp = partyProfile(vendorEl.value);
+        if (pp) {
+          appliedKey = k;
+          if (!catTouched && pp.topCat && allCats().includes(pp.topCat)) selectCat(pp.topCat);
+          const cat = chipVal(root, 'cat');
+          if (!itemTouched && !isPaymentCat(cat)) {
+            const it = pp.lastItemByCat[cat] || '';
+            if (it || itemAuto) { itemEl.value = it; itemAuto = !!it; applyItemUnit(); }
+          }
+          if (!modeTouched && pp.lastMode && PAY_MODES.includes(pp.lastMode)) { setChip(root, 'mode', pp.lastMode); toggleAccount(pp.lastMode); syncAccountToMode(); }
+        }
+      }
+      renderHint();
+    };
+
+    // Mode chuna → account us type ka set (Cash->Cash, UPI/NetBanking/Online->Bank)
     bindChips(root, 'mode', (m) => {
       modeTouched = true; toggleAccount(m);
       const sel = root.querySelector('#f-account');
@@ -1312,16 +2066,14 @@ function openOutForm(existing) {
     });
     root.querySelector('#f-account').addEventListener('change', () => { accountTouched = true; });
     toggleAccount(t.payment_mode);
+    bindDateField(root, 'f-date');
 
     const qty = root.querySelector('#f-qty'), rate = root.querySelector('#f-rate'), amount = root.querySelector('#f-amount'), prev = root.querySelector('#amt-prev');
-    const itemEl = root.querySelector('#f-item'), unitEl = root.querySelector('#f-unit');
     // "manual" tabhi jab stored amount sach me qty×rate se alag ho (ya qty/rate hai hi nahi).
-    // Sirf "edit hai" isliye manual nahi — warna qty/rate badalne par amount purana reh jata tha.
     let manual = !!(existing && existing.amount != null && (existing.qty == null || existing.rate == null ||
       Number(existing.amount).toFixed(2) !== lineAmount(existing.qty, existing.rate, existing.unit).toFixed(2)));
     // Eint/Hazaar jaise per-1000 unit par Rate ka label "/ 1000" dikhao (taaki per-piece rate na daale)
-    const rateLabel = root.querySelector('#rate-label');
-    const qtyLabel = root.querySelector('#qty-label');
+    const rateLabel = root.querySelector('#rate-label'), qtyLabel = root.querySelector('#qty-label');
     const syncRateLabel = () => { const p = PER_1000_UNITS.includes(unitEl.value); rateLabel.textContent = p ? tr('Rate ₹ / 1000', 'Rate ₹ / 1000') : tr('Rate ₹', 'Rate ₹'); qtyLabel.textContent = p ? tr('Qty (pcs)', 'Qty (ginti)') : tr('Qty', 'Qty'); };
     const calc = () => {
       syncRateLabel();
@@ -1349,10 +2101,10 @@ function openOutForm(existing) {
       if (cu) unitEl.value = cu;
     };
 
-    // Rate-book: item (+ shop/vendor) ka pichla rate auto-bhar. User khud rate type kare to app nahi chhedta.
-    const vendorEl = root.querySelector('#f-vendor');
-    let rateNoticed = false, rateAuto = false;
+    // Rate-book: item + dukaan ka pichla rate — sirf jab Qty × Rate khula ho (chhupa rate kabhi save na ho)
+    let rateAuto = false;
     const maybeFillRate = () => {
+      if (!moreOpen() || isPaymentCat(chipVal(root, 'cat'))) return;
       if (rate.value.trim() !== '' && !rateAuto) return;          // user ka type kiya rate na badlo
       if (!vendorEl.value.trim()) return;                         // dukaan pata nahi → rate guess mat karo
       const rb = rbGetExact(itemEl.value, vendorEl.value);        // sirf isi item + isi dukaan ka pichla rate
@@ -1362,32 +2114,36 @@ function openOutForm(existing) {
       }
     };
     rate.addEventListener('input', () => { rateAuto = false; });  // user ne rate chheda → ab manual
-    itemEl.oninput = () => { applyItemUnit(); maybeFillRate(); };
-    vendorEl.oninput = maybeFillRate;
-    applyItemUnit();
-    if (!existing) maybeFillRate();
+    itemEl.oninput = () => { itemTouched = true; itemAuto = false; applyItemUnit(); maybeFillRate(); };
+    vendorEl.oninput = () => { applyParty(); maybeFillRate(); };
+    vendorEl.onchange = () => { applyParty(); };
 
-    // Recent quick-pick chips (item by category, vendor) — tap to fill
+    // Recent quick-pick chips (item by category, party) — tap to fill
     const rcItems = root.querySelector('#rc-items'), rcVendors = root.querySelector('#rc-vendors');
     renderRecentItems = (cat) => {
-      rcItems.innerHTML = recentItems(cat).map((i) => `<button type="button" class="chip sm" data-v="${esc(i)}">${esc(i)}</button>`).join('');
+      rcItems.innerHTML = recentItems(cat).map((i) => `<button type="button" class="chip sm ud" data-v="${esc(i)}">${esc(i)}</button>`).join('');
       rcItems.querySelectorAll('.chip').forEach((c) => c.onclick = () => { itemEl.value = c.dataset.v; itemEl.dispatchEvent(new Event('input', { bubbles: true })); });
     };
     const renderRecentVendors = () => {
-      rcVendors.innerHTML = recentVendors().map((v) => `<button type="button" class="chip sm" data-v="${esc(v)}">${esc(v)}</button>`).join('');
+      rcVendors.innerHTML = recentVendors().map((v) => `<button type="button" class="chip sm ud" data-v="${esc(v)}">${esc(v)}</button>`).join('');
       rcVendors.querySelectorAll('.chip').forEach((c) => c.onclick = () => { vendorEl.value = c.dataset.v; vendorEl.dispatchEvent(new Event('input', { bubbles: true })); });
     };
-    renderRecentItems(t.category); renderRecentVendors();
 
-    // "+ Add details" collapse (account, date, note)
-    const moreBlock = root.querySelector('#more-block'), moreToggle = root.querySelector('#more-toggle');
-    const setMore = (open) => { moreBlock.classList.toggle('hidden', !open); moreToggle.textContent = (open ? '− ' : '+ ') + tr('Add details (account, date, note)', 'Aur details (account, date, note)'); };
-    moreToggle.onclick = () => setMore(moreBlock.classList.contains('hidden'));
-    if (isEdit) setMore(true);
+    // initial paint
+    renderCatChips(t.category); updItems(t.category); toggleBlocks(t.category);
+    renderRecentItems(t.category); renderRecentVendors();
+    applyItemUnit();
+    if (!fromExisting && t.vendor && !preset.next) applyParty(); else renderHint();
+
+    // "+ Aur" collapse (qty × rate, note, account)
+    const setMore = (open) => { moreBlock.classList.toggle('hidden', !open); setMoreLabel(); if (open && !fromExisting) maybeFillRate(); };
+    moreToggle.onclick = () => setMore(!moreOpen());
+    if (isEdit || (existing && (existing.qty != null || existing.rate != null || cleanNote(existing.notes)))) setMore(true); else setMoreLabel();
+    if (!isEdit) setTimeout(() => { try { amount.focus({ preventScroll: true }); } catch (_) { } }, 60);
 
     root.querySelector('#cancel').onclick = closeSheet;
     if (isEdit) root.querySelector('#del').onclick = () => confirmDelete(t);
-    root.querySelector('#save').onclick = async () => {
+    const doSave = (next) => {
       const cat = chipVal(root, 'cat');
       const mode = chipVal(root, 'mode');
       const rec = {
@@ -1395,16 +2151,18 @@ function openOutForm(existing) {
         category: cat, amount: num(amount.value) || 0,
         account_id: mode === 'Udhaar' ? null : (root.querySelector('#f-account').value || null),
         payment_mode: mode,
-        vendor: root.querySelector('#f-vendor').value.trim() || null,
+        vendor: vendorEl.value.trim() || null,
         notes: joinNote(root.querySelector('#f-notes').value, noteMarkers(t.notes)),
         item: null, qty: null, unit: null, rate: null, contract_id: null
       };
-      if (cat === 'Theka Payment') { rec.contract_id = root.querySelector('#f-contract').value || null; }
+      if (cat === 'Theka Payment') { rec.contract_id = contractSel.value || null; }
       else if (cat === 'Architect') { /* seedha payment — sirf amount + vendor + note */ }
       else {
         rec.item = itemEl.value.trim() || null;
         const q = num(qty.value), r = num(rate.value);
-        rec.qty = isNaN(q) ? null : q; rec.unit = unitEl.value; rec.rate = isNaN(r) ? null : r;
+        rec.qty = isNaN(q) ? null : q; rec.rate = isNaN(r) ? null : r;
+        // Purani entry (bina qty/rate) ka unit waisa hi rakho — sirf khol ke Save karne se data na badle
+        rec.unit = (isEdit && isNaN(q) && isNaN(r)) ? (t.unit ?? null) : unitEl.value;
         // amount hamesha qty×rate ke barabar rahe (jab tak user ne khud amount na badla ho)
         // rate-book sirf tab yaad rakho jab amount qty×rate se bana — manual amount ke saath rate galat ho sakta hai
         if (!manual && !isNaN(q) && !isNaN(r)) {
@@ -1413,8 +2171,8 @@ function openOutForm(existing) {
         }
       }
       rec.amount = money(rec.amount);   // paise tak round (float drift store na ho)
-      if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
-      // Pehle se maujood spelling use karo ("tinku biana" → "Tinku Biana") — naya variant na bane
+      if (!(rec.amount > 0)) { toast(tr('Enter a valid amount', 'Amount sahi daalein'), true); amount.focus(); return; }
+      // Pehle se maujood spelling use karo ("ram ji" → "Ram Ji") — naya variant na bane
       rec.vendor = canonName(rec.vendor, vendorMap()); rec.item = canonName(rec.item, itemMap());
       if (mode === 'Udhaar') rec.notes = joinNote(cleanNote(rec.notes), noteMarkers(rec.notes).replace(/\[\[paid:[^\]]*\]\]/g, '').trim());
       if (!confirmIfDup(rec, !isEdit)) return;
@@ -1422,32 +2180,42 @@ function openOutForm(existing) {
       bumpRecent('gk_ri_' + cat, rec.item); bumpRecent('gk_rv', rec.vendor);
       setCatDefault(cat, rec.account_id, mode);   // is category ka last-used account+mode yaad
       closeSheet(); saveTx(rec, !isEdit);
+      if (next) {
+        // Ek baithak me kai entries: date + party + mode (+ category/theka) wahi, baaki khaali
+        openOutForm(null, { next: true, date: rec.date, vendor: rec.vendor, mode: rec.payment_mode, category: cat, contract_id: rec.contract_id, account: rec.account_id });
+        toast(tr('Saved ✅ — enter the next one', 'Save ✅ — agla daalo'));
+      }
     };
+    root.querySelector('#save').onclick = () => doSave(false);
+    const sn = root.querySelector('#save-next'); if (sn) sn.onclick = () => doSave(true);
   });
 }
 
 /* ====================== FORM: Paisa Aaya (In) ==================== */
-function openInForm(existing) {
-  const t = existing || { id: uid(), type: 'In', date: today(), source: 'Bank Withdrawal', account_id: (state.accounts[0] || {}).id };
+function openInForm(existing, preset) {
+  preset = preset || {};
+  const t = existing || { id: uid(), type: 'In', date: preset.date || today(), source: preset.source || 'Bank Withdrawal', account_id: (preset.account && accById(preset.account) ? preset.account : (state.accounts[0] || {}).id) };
   // List me na ho aisa source (import/legacy) bhi rahe — warna edit par chup-chaap badal jaata tha
   const srcOpts = (t.source && !SOURCES.includes(t.source)) ? [t.source, ...SOURCES] : SOURCES;
   const inner = `
-    <h3>${existing ? tr('✏️ Edit money in', '✏️ Aaya edit') : tr('➕ Money In', '➕ Paisa Aaya')}</h3>
+    <h3>${existing ? tr('✏️ Edit money in', '✏️ Aaya edit') : preset.next ? tr('➕ Next money in', '➕ Agla Paisa Aaya') : tr('➕ Money In', '➕ Paisa Aaya')}</h3>
+    ${preset.next ? `<div class="next-note">✅ ${tr('Saved. Same date & account kept.', 'Save ho gaya. Date aur account wahi hai.')}</div>` : ''}
+    <div class="field"><label>${tr('Amount ₹', 'Amount ₹')}</label><input id="f-amount" class="big-amt" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
     <div class="field"><label>${tr('Received in (account)', 'Kahan aaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
-    <div class="field"><label>${tr('Amount ₹', 'Amount ₹')}</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
     <div class="field"><label>${tr('Source (where from)', 'Kahan se aaya (source)')}</label>${chipsHtml('src', srcOpts, t.source)}</div>
-    <div class="field"><label>${tr('From whom (name, optional)', 'Kisse (naam, optional)')}</label><input id="f-from" list="dl-from" value="${esc(t.from_party || '')}" placeholder="${tr('person / bank', 'aadmi / bank')}" />
+    <div class="field"><label>${tr('From whom (name, optional)', 'Kisse (naam, optional)')}</label><input id="f-from" list="dl-from" autocomplete="off" value="${esc(t.from_party || '')}" placeholder="${tr('person / bank', 'aadmi / bank')}" />
       <datalist id="dl-from">${learned('gk_from').map((v) => `<option>${esc(v)}</option>`).join('')}</datalist></div>
-    <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
+    ${dateFieldHtml('f-date', t.date)}
     <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="f-notes">${esc(cleanNote(t.notes))}</textarea></div>
-    <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
+    <div class="save-row"><button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>${existing ? '' : `<button class="btn-primary next" id="save-next">💾 ${tr('Save + next', 'Save + agla')}</button>`}</div>
     ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
     bindChips(root, 'src');
+    bindDateField(root, 'f-date');
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = () => confirmDelete(t);
-    root.querySelector('#save').onclick = async () => {
+    const doSave = (next) => {
       const acc = accById(root.querySelector('#f-account').value);
       const rec = {
         id: t.id, type: 'In', date: root.querySelector('#f-date').value || today(),
@@ -1463,28 +2231,35 @@ function openInForm(existing) {
       if (!confirmIfDup(rec, !existing)) return;
       learnList('gk_from', rec.from_party);
       closeSheet(); saveTx(rec, !existing);
+      if (next) { openInForm(null, { next: true, date: rec.date, account: rec.account_id, source: rec.source }); toast(tr('Saved ✅ — enter the next one', 'Save ✅ — agla daalo')); }
     };
+    root.querySelector('#save').onclick = () => doSave(false);
+    const sn = root.querySelector('#save-next'); if (sn) sn.onclick = () => doSave(true);
   });
 }
 
 /* ========================= FORM: Transfer ======================= */
-function openTransferForm(existing) {
-  const t = existing || { id: uid(), type: 'Transfer', date: today(), account_id: (state.accounts.find((a) => a.type === 'Bank') || state.accounts[0] || {}).id, to_account_id: (state.accounts.find((a) => a.type === 'Cash') || state.accounts[0] || {}).id };
+function openTransferForm(existing, preset) {
+  preset = preset || {};
+  const t = existing || { id: uid(), type: 'Transfer', date: preset.date || today(),
+    account_id: preset.from || (state.accounts.find((a) => a.type === 'Bank') || state.accounts[0] || {}).id,
+    to_account_id: preset.to || (state.accounts.find((a) => a.type === 'Cash') || state.accounts[0] || {}).id };
   const inner = `
     <h3>${existing ? tr('✏️ Edit transfer', '✏️ Transfer edit') : '🔁 ' + tr('Transfer', 'Transfer')}</h3>
-    <p class="muted" style="margin:0 2px 6px">${tr('E.g. cash withdrawn from bank, or one account to another.', 'Jaise: Bank se cash nikala, ya ek account se dusre me.')}</p>
+    ${preset.next ? `<div class="next-note">✅ ${tr('Saved. Same date & accounts kept.', 'Save ho gaya. Date aur accounts wahi hain.')}</div>` : `<p class="muted" style="margin:0 2px 6px">${tr('E.g. cash withdrawn from bank, or one account to another.', 'Jaise: Bank se cash nikala, ya ek account se dusre me.')}</p>`}
+    <div class="field"><label>${tr('Amount ₹', 'Amount ₹')}</label><input id="f-amount" class="big-amt" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
     <div class="field"><label>${tr('From', 'Kahan se (from)')}</label><select id="f-from">${accOptions(t.account_id)}</select></div>
     <div class="field"><label>${tr('To', 'Kahan (to)')}</label><select id="f-to">${accOptions(t.to_account_id)}</select></div>
-    <div class="field"><label>${tr('Amount ₹', 'Amount ₹')}</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
-    <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
+    ${dateFieldHtml('f-date', t.date)}
     <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="f-notes">${esc(cleanNote(t.notes))}</textarea></div>
-    <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
+    <div class="save-row"><button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>${existing ? '' : `<button class="btn-primary next" id="save-next">💾 ${tr('Save + next', 'Save + agla')}</button>`}</div>
     ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
+    bindDateField(root, 'f-date');
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = () => confirmDelete(t);
-    root.querySelector('#save').onclick = async () => {
+    const doSave = (next) => {
       const from = root.querySelector('#f-from').value, to = root.querySelector('#f-to').value;
       if (from === to) return toast(tr('Choose different From and To accounts', 'From aur To alag account chuno'), true);
       const rec = {
@@ -1497,46 +2272,76 @@ function openTransferForm(existing) {
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
       if (!confirmIfDup(rec, !existing)) return;
       closeSheet(); saveTx(rec, !existing);
+      if (next) { openTransferForm(null, { next: true, date: rec.date, from, to }); toast(tr('Saved ✅ — enter the next one', 'Save ✅ — agla daalo')); }
     };
+    root.querySelector('#save').onclick = () => doSave(false);
+    const sn = root.querySelector('#save-next'); if (sn) sn.onclick = () => doSave(true);
   });
 }
 
 /* =================== Entry detail (view/edit) =================== */
-function openEntryDetail(t) {
+// Party / category / item / mode / account pe tap → Entries us filter ke saath
+// Laptop (>=1100px) Entries: right pane me chuni hui entry ki detail (ya party filter ho to khata ka link)
+function paneMode() { return isDesktop() && state.view === 'entries' && !!document.getElementById('ef-pane'); }
+function renderPane() {
+  const pane = document.getElementById('ef-pane'); if (!pane) return;
+  const list = document.getElementById('ef-list');
+  if (!isDesktop()) { pane.innerHTML = ''; return; }
+  let t = state.efSel && state.transactions.find((x) => x.id === state.efSel);
+  if (t && !matchesFilter(t, state.f)) t = null;   // filter badla aur entry ab list me nahi
+  if (list) list.querySelectorAll('.entry').forEach((e) => e.classList.toggle('sel', !!t && e.dataset.id === t.id));
+  if (t) { openEntryDetail(t, { pane }); return; }
+  state.efSel = null;
+  const p = state.f.party ? parties().find((x) => x.key === nameKey(state.f.party)) : null;
+  pane.innerHTML = `<div class="pane-empty"><div class="big">👈</div>${tr('Pick an entry to see its detail here', 'Entry chuno — uski detail yahan dikhegi')}
+    ${p ? `<button type="button" class="btn-secondary" id="pane-party" style="width:100%;margin-top:14px">📒 <span class="ud">${esc(p.name)}</span> — ${tr('open khata', 'khata kholo')}</button>` : ''}
+    <div class="muted" style="margin-top:14px"><kbd>/</kbd> ${tr('search', 'search')} · <kbd>N</kbd> ${tr('new expense', 'naya kharcha')} · <kbd>Esc</kbd> ${tr('close', 'band')}</div></div>`;
+  const pb = pane.querySelector('#pane-party'); if (pb) pb.onclick = () => openParty(p.key);
+}
+function openEntryDetail(t, opts) {
+  opts = opts || {};
   const lines = [];
   lines.push([tr('Type', 'Type'), { In: tr('Money In', 'Paisa Aaya'), Out: tr('Expense', 'Kharcha'), Transfer: tr('Transfer', 'Transfer') }[t.type]]);
   lines.push([tr('Amount', 'Amount'), inr(t.amount)]);
-  lines.push([tr('Date', 'Date'), fmtDate(t.date)]);
-  if (t.category) lines.push([tr('Category', 'Category'), t.category]);
-  if (t.item) lines.push([tr('Item', 'Item'), t.item]);
+  lines.push([tr('Date', 'Date'), (weekday(t.date) ? weekday(t.date) + ', ' : '') + fmtDate(t.date)]);
+  if (t.category) lines.push([tr('Category', 'Category'), t.category, { category: t.category }]);
+  if (t.item) lines.push([tr('Item', 'Item'), t.item, { item: t.item }]);
   if (t.qty) lines.push([tr('Qty', 'Qty'), fmtQtyRate(t)]);
-  if (t.vendor) lines.push([tr('Vendor', 'Vendor'), t.vendor]);
+  if (t.vendor) lines.push([tr('Party', 'Party'), t.vendor, { party: t.vendor }]);
   if (t.source) lines.push([tr('Source', 'Source'), t.source]);
-  if (t.from_party) lines.push([tr('From', 'Kisse'), t.from_party]);
+  if (t.from_party) lines.push([tr('From', 'Kisse'), t.from_party, { party: t.from_party }]);
   if (t.type === 'Transfer') lines.push(['', `${accName(t.account_id)} → ${accName(t.to_account_id)}`]);
-  else if (t.account_id) lines.push([tr('Account', 'Account'), accName(t.account_id)]);
-  if (t.payment_mode) lines.push([tr('Mode', 'Mode'), t.payment_mode]);
-  if (t.contract_id) lines.push([tr('Theka', 'Theka'), (state.contracts.find((c) => c.id === t.contract_id) || {}).thekedar_name || '—']);
+  else if (t.account_id) lines.push([tr('Account', 'Account'), accName(t.account_id), { account: t.account_id }]);
+  if (t.payment_mode) lines.push([tr('Mode', 'Mode'), t.payment_mode, t.type === 'Out' ? { mode: t.payment_mode } : null]);
+  if (t.contract_id) { const c = contractById(t.contract_id); lines.push([tr('Theka', 'Theka'), (c && c.thekedar_name) || '—', c && c.thekedar_name ? { party: c.thekedar_name } : null]); }
   if (cleanNote(t.notes)) lines.push([tr('Note', 'Note'), cleanNote(t.notes)]);
   if (paidOn(t.notes)) lines.push([tr('Udhaar paid on', 'Udhaar chukaya'), fmtDate(paidOn(t.notes))]);
 
   const isUdhaar = t.type === 'Out' && t.payment_mode === 'Udhaar';
   const inner = `
     <h3>${CAT_ICON[t.category] || (t.type === 'In' ? '💰' : '🔁')} ${tr('Detail', 'Detail')}</h3>
-    <div class="report-card">${lines.map(([k, v]) => `<div class="rrow"><div class="k">${esc(k)}</div><div class="v">${esc(v)}</div></div>`).join('')}</div>
+    <div class="report-card">${lines.map(([k, v, part]) => `<div class="rrow"><div class="k">${esc(k)}</div><div class="v">${part ? `<button type="button" class="vlink ud" data-f="${esc(JSON.stringify(part))}">${esc(v)} <span class="vl-i">🔍</span></button>` : `<span class="ud">${esc(v)}</span>`}</div></div>`).join('')}</div>
+    <div class="muted" style="margin:-4px 2px 6px">🔍 ${tr('Tap a party / category / item to see all its entries', 'Party / category / item pe tap → uski saari entries')}</div>
     ${isUdhaar ? `<button class="btn-primary" id="settle">✅ ${tr('Udhaar paid (mark)', 'Udhaar chukaya (paid mark)')}</button>` : ''}
     ${t.type === 'Out' ? `<button class="btn-secondary" id="repeat" style="width:100%;margin-top:8px">🔁 ${tr('Repeat (new entry)', 'Dobara — nayi entry')}</button>` : ''}
     <button class="btn-secondary" id="edit" style="width:100%;margin-top:8px">✏️ ${tr('Edit', 'Edit')}</button>
     <button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>
     <button class="btn-ghost" id="cancel">${tr('Close', 'Band karo')}</button>`;
-  openSheet(inner, (root) => {
-    root.querySelector('#cancel').onclick = closeSheet;
+  const bindDetail = (root, close) => {
+    root.querySelector('#cancel').onclick = close;
     root.querySelector('#del').onclick = () => confirmDelete(t);
     root.querySelector('#edit').onclick = () => { closeSheet(); if (t.type === 'Out') openOutForm(t); else if (t.type === 'In') openInForm(t); else openTransferForm(t); };
+    root.querySelectorAll('.vlink[data-f]').forEach((b) => b.onclick = () => {
+      let part; try { part = JSON.parse(b.dataset.f); } catch (_) { return; }
+      const refine = state.view === 'entries' && modalRoot().children.length <= 1;
+      closeSheet(); openEntriesWith(part, { refine });
+    });
     const rpt = root.querySelector('#repeat');
     if (rpt) rpt.onclick = () => { closeSheet(); const c = Object.assign({}, t, { id: uid(), date: today(), notes: cleanNote(t.notes) || null }); delete c.created_at; openOutForm(c); };
     if (isUdhaar) root.querySelector('#settle').onclick = () => { closeSheet(); openSettleForm(t); };
-  });
+  };
+  if (opts.pane) { opts.pane.innerHTML = `<div class="pane-card">${inner}</div>`; bindDetail(opts.pane, () => { state.efSel = null; renderPane(); }); return; }
+  openSheet(inner, (root) => bindDetail(root, closeSheet));
 }
 
 function openSettleForm(t) {
@@ -1853,7 +2658,7 @@ function computeCleanup() {
   names.forEach((n) => { (groups[find(n)] = groups[find(n)] || []).push(n); });
   for (const g of Object.values(groups)) {
     if (g.length < 2) continue;
-    // Title Case wali spelling pehle ("Tinku Biana" > "Tinku biana"), phir jo zyada use hui
+    // Title Case wali spelling pehle ("Ram Ji" > "Ram ji"), phir jo zyada use hui
     const canon = g.slice().sort((a, b) => titledName(b) - titledName(a) || cnt[b] - cnt[a] || b.length - a.length)[0];
     const ch = [];
     for (const t of T) if (t.vendor && g.includes(t.vendor.trim()) && t.vendor !== canon) ch.push({ table: 'transactions', id: t.id, set: { vendor: canon }, label: txLabel(t), from: t.vendor, to: canon });
@@ -2004,10 +2809,12 @@ function download(name, text, mime) {
   const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
-function exportCSV() {
+// rows diye ho to sirf wahi (Entries ka filter / Reports ki range); warna saari entries
+function exportCSV(rows, prefix) {
+  const list = Array.isArray(rows) ? rows : state.transactions;
   const cols = ['date', 'type', 'category', 'item', 'qty', 'unit', 'rate', 'amount', 'account', 'to_account', 'payment_mode', 'vendor', 'source', 'from_party', 'notes'];
   const head = cols.join(',');
-  const rows = state.transactions.map((t) => cols.map((c) => {
+  const out = list.map((t) => cols.map((c) => {
     let v;
     if (c === 'account') v = accName(t.account_id);
     else if (c === 'to_account') v = t.to_account_id ? accName(t.to_account_id) : '';
@@ -2017,8 +2824,8 @@ function exportCSV() {
     if (/^[=+\-@]/.test(v) && isNaN(Number(v))) v = "'" + v;   // Excel isse formula na samjhe
     return '"' + v.replace(/"/g, '""') + '"';
   }).join(','));
-  download('pai-pai-' + today() + '.csv', '﻿' + head + '\n' + rows.join('\n'), 'text/csv;charset=utf-8');
-  toast(tr('CSV downloaded', 'CSV download ho gaya'));
+  download('pai-pai-' + (typeof prefix === 'string' ? prefix : '') + today() + '.csv', '﻿' + head + '\n' + out.join('\n'), 'text/csv;charset=utf-8');
+  toast(tr('CSV downloaded', 'CSV download ho gaya') + ' (' + list.length + ')');
 }
 function exportJSON(prefix) {
   download((typeof prefix === 'string' ? prefix : 'pai-pai-backup-') + today() + '.json', JSON.stringify({ accounts: state.accounts, contracts: state.contracts, transactions: state.transactions, exported: today() }, null, 2), 'application/json');
@@ -2203,6 +3010,7 @@ async function enterApp() {
     if (state.session.user.email) localStorage.setItem('gk_email', state.session.user.email);
   }
   buildShell();
+  bindHistory();
   renderHeader();
   // Cache me jo hai wo TURANT dikhao (network ka wait nahi) — offline-first ka asli fayda
   loadCache();
@@ -2236,6 +3044,53 @@ function registerSW() {
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch((e) => console.warn('SW', e));
 }
 
+/* ---- Tablet / laptop: breakpoints (CSS media queries; JS sirf layout-change pe re-render) + keyboard ---- */
+const MQ_DESK = '(min-width: 1100px)', MQ_WIDE = '(min-width: 768px)';
+function isDesktop() { return !!(window.matchMedia && window.matchMedia(MQ_DESK).matches); }
+function isWide() { return !!(window.matchMedia && window.matchMedia(MQ_WIDE).matches); }
+function watchBreakpoints() {
+  if (!window.matchMedia) return;
+  const mq = window.matchMedia(MQ_DESK);
+  const on = () => { if (document.getElementById('screen') && state.view === 'entries') renderScreen(); };
+  if (mq.addEventListener) mq.addEventListener('change', on); else if (mq.addListener) mq.addListener(on);
+}
+function focusSearch() {
+  if (state.view === 'theka' && $('#k-q')) { $('#k-q').focus(); return; }
+  if (state.view !== 'entries') show('entries');
+  const q = $('#ef-q'); if (q) { q.focus(); try { q.select(); } catch (_) { } }
+}
+// Esc = sheet/dialog band · Enter (form field me, tablet/laptop) = Save · '/' = search · 'n' = naya kharcha
+// ('/' aur 'n' sirf tab jab kisi input me type nahi kar rahe aur koi sheet khuli nahi)
+function setupKeys() {
+  document.addEventListener('keydown', (e) => {
+    if (!document.querySelector('.bottom-nav')) return;   // login screen pe kuch nahi
+    const tgt = e.target;
+    const typing = !!(tgt && tgt.matches && (tgt.matches('input, textarea, select') || tgt.isContentEditable));
+    const modal = !!(modalRoot() && modalRoot().children.length);
+    if (e.key === 'Escape') {
+      if (modal) { e.preventDefault(); closeSheet(); return; }
+      if (typing && tgt.blur) { tgt.blur(); return; }
+      if (state.view === 'entries' && state.efSel) { state.efSel = null; renderPane(); }
+      return;
+    }
+    if (e.metaKey || e.ctrlKey || e.altKey || e.isComposing) return;
+    if (e.key === 'Enter') {
+      if (modal && typing && tgt.tagName === 'INPUT' && isWide() && !tgt.hasAttribute('list') && !tgt.classList.contains('mini-q') &&
+          !['checkbox', 'radio', 'button', 'submit'].includes(tgt.type) && tgt.id !== 'cat-new-input') {
+        const sheet = tgt.closest('.sheet'); const btn = sheet && sheet.querySelector('#save, #sv-save, #fs-apply');
+        if (btn && !btn.disabled) { e.preventDefault(); btn.click(); }
+        return;
+      }
+      if (!typing && tgt && tgt.getAttribute && tgt.getAttribute('tabindex') === '0' && !tgt.matches('button, a')) { e.preventDefault(); tgt.click(); }
+      return;
+    }
+    if (e.key === ' ' && !typing && tgt && tgt.getAttribute && tgt.getAttribute('tabindex') === '0' && !tgt.matches('button, a')) { e.preventDefault(); tgt.click(); return; }
+    if (typing || modal) return;
+    if (e.key === '/') { e.preventDefault(); focusSearch(); }
+    else if (e.key === 'n' || e.key === 'N') { e.preventDefault(); openOutForm(); }
+  });
+}
+
 // Keyboard khulne par body.kb-open laga do → bottom-nav chhup jaye (iOS float fix)
 function setupKeyboardNav() {
   const vv = window.visualViewport;
@@ -2258,6 +3113,8 @@ async function start() {
   registerSW();
   bindConnectivity();
   setupKeyboardNav();
+  setupKeys();
+  watchBreakpoints();
   if (!initClient()) { renderAuth(); return; }
   try {
     const { data } = await sb.auth.getSession();

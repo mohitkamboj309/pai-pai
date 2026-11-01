@@ -56,10 +56,32 @@ App **GitHub Pages** par host hai (free) — live URL:
     (amount apne aap), kisse liya (vendor), kis account se, Cash/UPI/Net Banking/Online/Udhaar.
   - **➕ Paisa Aaya** — kahan se aaya (bank nikasi/salary/loan…), kis account me.
   - **🔁 Transfer** — jaise **bank se cash nikala**.
-- **Entries** — sab dikhe, search/filter, edit/delete.
-- **Reports** — kahan se aaya, kise/category/item-wise gaya, payment-mode wise, **theka kitna
-  diya–kitna baaki**, **udhaar kiska kitna**, aur **CSV/Excel export**.
-- **Theka** — har thekedar ka amount vs diya vs baaki.
+- **Entries** — din-wise list (har din ka kul kharcha upar), search (item, party, note, ₹ amount
+  jaise `17000` / `17,000`, date/mahina jaise `oct` / `1 nov`), edit/delete.
+  - **Filter:** "+ Filter" se date (Sab / Is mahina / Pichla / Custom), party, category, item, mode,
+    account, type, Personal shamil ya nahi. Button pe pehle hi dikhta hai kitni entries aur kitna total.
+  - **Tap-to-filter:** kisi bhi entry me party ke naam pe tap, entry detail me party/category/item/mode pe
+    tap, Reports ki kisi row pe tap, Home ke Cash/Bank/Is mahine card pe tap → Entries usi filter ke saath.
+    Upar chips ("Ram Mistry ✕") se ek-ek filter hatao ya "Saaf karo".
+  - **Saved views:** filter laga ke "⭐ View save karo" → naam do → Entries me upar chip. Hatane ke liye
+    ✏️ dabao (ya chip pe der tak dabao). Views sirf is phone pe save hote hain.
+  - **⬇️ CSV** sirf wahi entries export karta hai jo filter me dikh rahi hain.
+  - Entries se kahin aur jaake wapas aao to filter aur scroll wahin rehte hain.
+- **Naya kharcha:** pehle **Amount**, phir **Kise diya** (party). Jaani-pehchaani party chunte hi uski
+  aam category, aakhri item aur aakhri mode apne aap bhar jaate hain (jo tumne khud chuna wo nahi
+  badalta). Thekedar ho to "🤝 theka chal raha hai → Theka Payment" sujhav, ek tap me theka link.
+  Date hamesha dikhti hai (Aaj / Kal chips). Qty × Rate, note, account "+ Aur" me.
+  - **Save + agla:** save karke turant agla form — date, party, mode wahi; amount/item/note khaali.
+    (Paisa Aaya aur Transfer me bhi.)
+- **Reports** — tabs: **Summary** (Aaya vs Gaya, ghar ka kharcha bina Personal, Personal alag, udhaar
+  baaki, account balance, paisa kisse aaya), **Category**, **Party**, **Item** (kul qty, average rate,
+  sabse kam–zyada rate, pehla → aakhri rate), **Mahina**. Upar date range (Sab / Is mahina / Pichla /
+  Custom). Har row pe tap → uski entries. **CSV/Excel export** usi range ka.
+- **Khata** — har party ka khata (thekedar, supplier, mistry). Upar **Kul dena baaki** (udhaar + theka
+  baaki; advance nahi gina). Search + chips: Sab / Dena baaki / Udhaar / Theka / Supplier.
+  Party pe tap: theka (rate list, measurement), side kaam ka udhaar + "Udhaar chukao", **poora ledger**
+  (har entry, ∑ ab tak kul diya), **➕ Payment do**, **📜 Entries mein dekho**, aur
+  **📤 WhatsApp pe hisaab** (text dekh/badal ke WhatsApp khulta hai — contact wahin chuno).
 - **Settings** — accounts (Cash/Bank) manage, backup, cloud config, logout.
 
 ### Khaas baatein
@@ -72,7 +94,7 @@ App **GitHub Pages** par host hai (free) — live URL:
   Unit khud bhi badal sakte ho.
 - **Naye item/vendor** likhoge to wo apne aap suggestion me yaad ho jaate hain.
 - **Backup:** Settings se kabhi bhi **JSON backup** ya **CSV** download kar lo.
-- **Khata tab:** har party (thekedar/vendor) ka hisaab ek jagah — theka kitna/diya/advance, aur
+- **Khata tab:** har party (thekedar/vendor/supplier) ka hisaab ek jagah — theka kitna/diya/advance, aur
   side kaam ka udhaar alag. **"Udhaar chukao"** se ek hi baar me saara (ya kuch) udhaar chuk jaata
   hai — purani entries pehle, aadha diya to baaki udhaar me hi rehta hai. Chukane ki date entry me
   "Udhaar chukaya" ke roop me dikhti hai.
