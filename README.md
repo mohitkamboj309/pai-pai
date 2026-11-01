@@ -110,6 +110,9 @@ App **GitHub Pages** par host hai (free) — live URL:
   phir badlav. **Undo** bhi Settings me. Amount kabhi nahi badalta.
 - **Light / Dark:** default Light (din me site pe padhne me aasaan). Settings → Theme: **Auto** (phone ki
   setting jaisa), **Light** ya **Dark**. Sirf look badalta hai, data nahi.
+- **Party avatar + theka progress:** har party ka gol avatar (naam ke initials, naam se tay rang). Theka
+  jahan dikhe (Khata, Home Dena baaki, party sheet) wahan diya / amount ka bar: hara = pura, accent = chal
+  raha, amber hissa = advance, dhaariyaan = amount set nahi. Sirf dikhane ke liye, hisaab wahi.
 
 ### Design / licences
 - Font: **Geist** (Vercel) — `fonts/Geist-Variable.woff2`, SIL Open Font License 1.1 (`fonts/OFL.txt`). Repo me hi hai, offline bhi chalta hai.
