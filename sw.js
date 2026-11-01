@@ -1,6 +1,6 @@
 // Pai-Pai — service worker (offline app shell)
 // Jab bhi app files badlein, CACHE version badha dena (v1 -> v2 ...).
-const CACHE = 'pai-pai-v27';
+const CACHE = 'pai-pai-v28';
 const SHELL = [
   './',
   './index.html',
@@ -8,6 +8,7 @@ const SHELL = [
   './app.js',
   './manifest.json',
   './vendor/supabase.js',
+  './fonts/Geist-Variable.woff2',
   './icons/icon-192.png',
   './icons/icon-512.png',
   './icons/apple-touch-icon.png'
