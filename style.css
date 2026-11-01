@@ -336,3 +336,8 @@ body.kb-open .bottom-nav { transform: translateY(150%); }
 .cl-item input { width: 20px; height: 20px; margin-top: 2px; flex: 0 0 auto; }
 .cl-item details summary { margin-top: 4px; cursor: pointer; }
 .cl-row { font-size: 12.5px; padding: 5px 0; border-top: 1px dashed #e9edf0; }
+
+/* ---------- Theka rate list ---------- */
+.rate-row { display: grid; grid-template-columns: 1.6fr .8fr 1fr .7fr auto; gap: 6px; margin-bottom: 6px; }
+.rate-row input, .rate-row select { width: 100%; min-width: 0; padding: 10px 8px; border: 1.5px solid var(--line); border-radius: 10px; background: #fff; font-size: 14px; }
+.rate-row .rl-x { color: var(--muted); padding: 0 6px; }

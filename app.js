@@ -476,13 +476,14 @@ function contractPaid(cid) {
 // Theka ki halat. Diya > amount = "advance" (kaam/measurement abhi baaki) — galti nahi, isliye laal nahi.
 function thekaStatus(c) {
   const paid = contractPaid(c.id), amt = Number(c.theka_amount) || 0;
-  if (!amt) return { paid, amt, kind: 'noamount', diff: 0 };
+  if (!amt) return { paid, amt, kind: parseRates(c.notes).length ? 'ratewise' : 'noamount', diff: 0, measured: ratesTotal(parseRates(c.notes)) };
   if (paid > amt + 0.5) return { paid, amt, kind: 'advance', diff: paid - amt };
   if (amt - paid < 0.5) return { paid, amt, kind: 'done', diff: 0 };
   return { paid, amt, kind: 'baaki', diff: amt - paid };
 }
 function thekaStatusLine(s) {
   if (s.kind === 'noamount') return { k: tr('Theka amount', 'Theka amount'), v: tr('Not set — tap to add', 'Set nahi — daalo'), color: '#8a6100' };
+  if (s.kind === 'ratewise') return { k: tr('Rate-wise theka', 'Rate-wise theka'), v: s.measured ? tr('measured ', 'measurement ') + inr(s.measured) : tr('measurement pending', 'measurement baaki'), color: '#1d6fd0' };
   if (s.kind === 'advance') return { k: tr('Advance (measurement pending)', 'Advance (measurement baaki)'), v: inr(s.diff), color: '#1d6fd0' };
   if (s.kind === 'done') return { k: tr('Left', 'Baaki'), v: tr('Fully paid', 'Pura'), color: '#1f7a4d' };
   return { k: tr('Left', 'Baaki'), v: inr(s.diff), color: '#c0392b' };
@@ -694,6 +695,7 @@ function denaBaakiRows() {
     const s = thekaStatus(c), nm = c.thekedar_name || c.kaam || tr('Theka', 'Theka'), key = nameKey(c.thekedar_name || c.kaam);
     if (s.kind === 'baaki') rows.push({ party: key, label: `${nm} — ${tr('theka left', 'theka baaki')}`, v: inr(s.diff), color: '#c0392b' });
     else if (s.kind === 'noamount') rows.push({ party: key, label: `${nm} — ${tr('theka amount not set', 'theka amount set nahi')}`, v: tr('set', 'daalo'), color: '#8a6100' });
+    else if (s.kind === 'ratewise') rows.push({ party: key, label: `${nm} — ${tr('rate-wise, advance given', 'rate-wise, advance diya')}`, v: inr(s.paid), color: '#1d6fd0' });
     else if (s.kind === 'advance') rows.push({ party: key, label: `${nm} — ${tr('advance (measurement pending)', 'advance (measurement baaki)')}`, v: inr(s.diff), color: '#1d6fd0' });
   }
   return rows;
@@ -1013,15 +1015,18 @@ function openParty(key) {
       <div class="rrow"><div class="k">${tr('Theka amount', 'Theka amount')}</div><div class="v">${s.amt ? inr(s.amt) : '—'}</div></div>
       <div class="rrow"><div class="k">${tr('Paid', 'Diya')}</div><div class="v" style="color:#1f7a4d">${inr(s.paid)}</div></div>
       <div class="rrow"><div class="k">${esc(sl.k)}</div><div class="v" style="color:${sl.color}">${esc(sl.v)}</div></div>
+      ${(() => { const rl = parseRates(c.notes); if (!rl.length) return ''; return `<div class="section-label" style="margin-top:12px">${tr('Rate list', 'Rate list')}</div>` +
+        rl.map((l) => `<div class="rrow"><div class="k">${esc(l.n)}<small>${inr(l.r)} ${esc(RATE_UNITS[l.u] || '')}${Number(l.q) ? ' × ' + l.q : ''}</small></div><div class="v">${Number(l.q) ? inr(rateLineAmt(l)) : '<span class="muted">' + tr('pending', 'baaki') + '</span>'}</div></div>`).join('') +
+        (ratesTotal(rl) ? `<div class="total-line"><span>${tr('Measured total', 'Measurement total')}</span><span>${inr(ratesTotal(rl))}</span></div>` : ''); })()}
       ${s.kind === 'advance' ? `<div class="muted" style="margin-top:6px">${tr('Paid more than current theka amount — normal if more work/measurement is still to be added. Update the theka amount after measurement.', 'Theka amount se zyada diya — normal hai agar aur kaam/measurement abhi add hona hai. Measurement ke baad theka amount update kar dena.')}</div>` : ''}
       <button class="btn-secondary" data-edit-theka="${esc(c.id)}" style="width:100%;margin-top:10px">✏️ ${tr('Edit theka / measurement', 'Theka / measurement edit')}</button>
     </div>`; }).join('')}
-    <div class="report-card">
+    ${pend.length || Object.keys(settledByDate).length ? `<div class="report-card">
       <h4>👷 ${tr('Side work (outside theka)', 'Side kaam (theke se alag)')}</h4>
       <div class="rrow"><div class="k">${tr('Udhaar pending', 'Udhaar baaki')}<small>${pend.length} ${tr('entries', 'entries')}${pend.length ? ' · ' + tr('from ', '') + fmtDate(pend[0].date) + tr('', ' se') : ''}</small></div><div class="v" style="color:#8a6100">${inr(p.udhaar)}</div></div>
       ${Object.keys(settledByDate).sort().reverse().map((d) => `<div class="rrow"><div class="k">✅ ${tr('Settled on', 'Chukaya')} ${fmtDate(d)}<small>${settledByDate[d].n} ${tr('entries', 'entries')}</small></div><div class="v" style="color:#1f7a4d">${inr(settledByDate[d].amt)}</div></div>`).join('')}
       ${pend.length ? `<button class="btn-primary" id="bulk-settle">💸 ${tr('Settle udhaar', 'Udhaar chukao')} (${inr(p.udhaar)})</button>` : ''}
-    </div>
+    </div>` : ''}
     <div class="report-card">
       <h4>🧮 ${tr('Total paid to', 'Kul diya')} ${esc(p.name)}</h4>
       ${p.contracts.length ? `<div class="rrow"><div class="k">${tr('Theka payments', 'Theka payments')}</div><div class="v">${inr(thekaPaid)}</div></div>` : ''}
@@ -1581,11 +1586,22 @@ function parseSqft(notes) {
   if (m) { try { sqft = JSON.parse(m[1]); } catch (_) { } text = (notes || '').replace(/\s*\[\[sqft:\{.*?\}\]\]/, '').trim(); }
   return { text, sqft };
 }
-function buildNote(text, sqft) {
+function buildNote(text, sqft, rates) {
   let n = (text || '').trim();
   if (sqft && (Number(sqft.ga) || Number(sqft.fa))) n = (n ? n + ' ' : '') + '[[sqft:' + JSON.stringify(sqft) + ']]';
+  if (rates && rates.length) n = (n ? n + ' ' : '') + '[[rates:' + encodeURIComponent(JSON.stringify(rates)) + ']]';
   return n || null;
 }
+// Rate-wise theka (jaise tile: ₹/sqft, ₹/running ft, per step, fix). Notes me [[rates:<url-encoded JSON>]]
+// (encode isliye ki JSON ke ']' marker ko na todein). Har line: {n: kaam, r: rate, u: unit, q: measurement qty}
+const RATE_UNITS = { sqft: '/sqft', rft: '/running ft', pc: '/piece', fix: 'fix' };
+function parseRates(notes) {
+  const m = String(notes || '').match(/\[\[rates:([^\]]*)\]\]/);
+  if (!m) return [];
+  try { const a = JSON.parse(decodeURIComponent(m[1])); return Array.isArray(a) ? a : []; } catch (_) { return []; }
+}
+function rateLineAmt(l) { return (Number(l.r) || 0) * (Number(l.q) || 0); }
+function ratesTotal(list) { return list.reduce((s, l) => s + rateLineAmt(l), 0); }
 function sqftLabel(notes) {
   const s = parseSqft(notes).sqft; if (!s) return '';
   const g = Number(s.ga) || 0, gr = Number(s.gr) || 0, f = Number(s.fa) || 0, fr = Number(s.fr) || 0;
@@ -1607,9 +1623,15 @@ function openThekaForm(existing) {
     <div class="row2"><div class="field"><label>${tr('1st floor sqft', '1st floor sqft')}</label><input id="t-f-area" type="number" inputmode="decimal" placeholder="0" /></div><div class="field"><label>${tr('₹ / sqft', '₹ / sqft')}</label><input id="t-f-rate" type="number" inputmode="decimal" placeholder="${tr('rate', 'rate')}" /></div></div>
     <div class="amt-preview" id="t-sqft-prev"></div>
 
+    <div class="section-label" style="margin-top:8px">${tr('Rate list (rate-wise theka, optional)', 'Rate list (rate-wise theka, optional)')}</div>
+    <div class="muted" style="margin:-4px 2px 6px">${tr('Rate per kaam; fill Qty when measurement is done.', 'Har kaam ka rate; measurement hone par Qty bharo.')}</div>
+    <div id="t-rates"></div>
+    <button type="button" class="btn-secondary" id="t-rate-add" style="width:100%">+ ${tr('Add rate line', 'Rate line jodo')}</button>
+    <div class="amt-preview" id="t-rate-prev"></div>
+
     <div class="field"><label>${tr('Theka amount ₹', 'Theka amount ₹')}</label><input id="t-amt" type="number" inputmode="decimal" step="any" value="${c.theka_amount ?? ''}" placeholder="0" /></div>
     <div class="field"><label>${tr('Start date', 'Shuru date')}</label><input id="t-date" type="date" value="${c.start_date || today()}" /></div>
-    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="t-notes">${esc(sp.text || '')}</textarea></div>
+    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="t-notes">${esc(cleanNote(c.notes))}</textarea></div>
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
     ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
@@ -1644,6 +1666,25 @@ function openThekaForm(existing) {
       calcSqft(false);   // sirf preview — stored theka_amount ko mat chhedo
     }
 
+    // Rate list rows
+    const rWrap = root.querySelector('#t-rates'), rPrev = root.querySelector('#t-rate-prev');
+    const rowHtml = (l) => `<div class="rate-row">
+      <input class="rl-n" placeholder="${tr('Work', 'Kaam')}" value="${esc(l.n || '')}" />
+      <input class="rl-r" inputmode="decimal" placeholder="₹" value="${l.r ?? ''}" />
+      <select class="rl-u">${Object.entries(RATE_UNITS).map(([k, v]) => `<option value="${k}" ${k === (l.u || 'sqft') ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
+      <input class="rl-q" inputmode="decimal" placeholder="${tr('Qty', 'Qty')}" value="${Number(l.q) ? l.q : ''}" />
+      <button type="button" class="rl-x" aria-label="remove">✕</button></div>`;
+    const readRates = () => Array.from(rWrap.querySelectorAll('.rate-row')).map((r) => ({ n: r.querySelector('.rl-n').value.trim(), r: num(r.querySelector('.rl-r').value) || 0, u: r.querySelector('.rl-u').value, q: num(r.querySelector('.rl-q').value) || 0 })).filter((l) => l.n);
+    const calcRates = () => {
+      const t = ratesTotal(readRates());
+      rPrev.innerHTML = t ? `${tr('Measured total', 'Measurement total')}: <b>${inr(t)}</b> <button type="button" class="link-btn" id="t-rate-use">${tr('Use as theka amount', 'Theka amount me daalo')}</button>` : '';
+      const u = rPrev.querySelector('#t-rate-use'); if (u) u.onclick = () => { amtEl.value = money(t); amtTouchedManually = true; };
+    };
+    const addRow = (l) => { rWrap.insertAdjacentHTML('beforeend', rowHtml(l || {})); const r = rWrap.lastElementChild; r.querySelectorAll('input,select').forEach((e) => e.oninput = calcRates); r.querySelector('.rl-x').onclick = () => { r.remove(); calcRates(); }; };
+    parseRates(c.notes).forEach(addRow);
+    root.querySelector('#t-rate-add').onclick = () => addRow({ u: 'sqft' });
+    calcRates();
+
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = async () => {
       if (!confirm(tr('Delete this theka? This cannot be undone.', 'Ye theka delete karein? Wapas nahi aayega.'))) return;
@@ -1655,8 +1696,9 @@ function openThekaForm(existing) {
         id: c.id, user_id: userId(), thekedar_name: root.querySelector('#t-name').value.trim() || null,
         kaam: root.querySelector('#t-kaam').value.trim() || null, theka_amount: money(parseFloat(root.querySelector('#t-amt').value) || 0),
         start_date: root.querySelector('#t-date').value || null,
-        notes: buildNote(root.querySelector('#t-notes').value, { ga: parseFloat(gArea.value) || 0, gr: parseFloat(gRate.value) || 0, fa: parseFloat(fArea.value) || 0, fr: parseFloat(fRate.value) || 0 })
+        notes: buildNote(root.querySelector('#t-notes').value, { ga: parseFloat(gArea.value) || 0, gr: parseFloat(gRate.value) || 0, fa: parseFloat(fArea.value) || 0, fr: parseFloat(fRate.value) || 0 }, readRates())
       };
+      if (c.created_at) rec.created_at = c.created_at;
       const i = state.contracts.findIndex((x) => x.id === c.id);
       if (i >= 0) state.contracts[i] = rec; else state.contracts.push(rec);
       cacheSet('contracts', state.contracts);
