@@ -108,6 +108,12 @@ App **GitHub Pages** par host hai (free) — live URL:
 - **Hisaab cleanup (Settings):** data me milne wali gadbad (vendor ki alag spelling, eint qty,
   galat category, double entry) ke **sujhav**. Tick karke Apply → pehle poora JSON backup download,
   phir badlav. **Undo** bhi Settings me. Amount kabhi nahi badalta.
+- **Light / Dark:** default Light (din me site pe padhne me aasaan). Settings → Theme: **Auto** (phone ki
+  setting jaisa), **Light** ya **Dark**. Sirf look badalta hai, data nahi.
+
+### Design / licences
+- Font: **Geist** (Vercel) — `fonts/Geist-Variable.woff2`, SIL Open Font License 1.1 (`fonts/OFL.txt`). Repo me hi hai, offline bhi chalta hai.
+- Icons: **Phosphor Icons** — sirf use hone wale icons `app.js` me SVG sprite ke roop me, MIT licence (`vendor/phosphor-icons-LICENSE.txt`).
 
 ---
 
