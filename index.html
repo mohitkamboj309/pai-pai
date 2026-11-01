@@ -18,9 +18,9 @@
 
   <link rel="stylesheet" href="style.css" />
 
-  <!-- Supabase client (CDN, no build step). defer = render-blocking nahi; loader turant dikhta hai.
-       app.js bhi defer hai → dono parse ke baad document-order me chalte hain (supabase pehle). -->
-  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+  <!-- Supabase client — repo me hi rakha hai (pinned v2.118.0) taaki offline cold-start pe bhi load ho
+       (service worker ise cache karta hai). defer: app.js se pehle document-order me chalta hai. -->
+  <script defer src="vendor/supabase.js"></script>
 </head>
 <body>
   <div id="app">

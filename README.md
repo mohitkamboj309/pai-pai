@@ -21,15 +21,11 @@ Bas 4 step. Aaram se karein, ek baar hi karna hai.
 4. Is folder ki file **`supabase-setup.sql`** ka pura text copy karke wahan paste karo →
    **Run** dabao. (Niche "Success" aa jaye to ho gaya.)
 
-### Step 2 — Login email me 6-digit code on karein (zaroori)
-Taaki login ke waqt email me **code** aaye (link nahi — iPhone app ke liye behtar):
-1. Supabase me left menu → **Authentication** → **Emails** (ya **Email Templates**).
-2. **Magic Link** template kholo. Uske HTML me kahin bhi ye line **add** kar do:
-   ```
-   <p>Aapka code: {{ .Token }}</p>
-   ```
-   (Jo `{{ .ConfirmationURL }}` wali line hai use rehne do, bas ye token wali line add karni hai.)
-3. **Save**.
+### Step 2 — Login (email + password)
+App me **email + password** se login hota hai. Pehli baar app me **"Naya account banao"** dabao.
+Apna account ban jaane ke baad Supabase → **Authentication → Sign In / Providers** me
+**"Allow new users to sign up"** band kar do — warna koi bhi public site se account bana sakta hai
+(tumhara data phir bhi RLS se safe rehta hai, bas free quota bharta hai).
 
 ### Step 3 — App me apni keys daalein
 1. Supabase me left menu → **Project Settings** (⚙️) → **API**.
@@ -46,7 +42,7 @@ App **GitHub Pages** par host hai (free) — live URL:
 
 ### iPhone par install
 1. Live URL **Safari** me kholo.
-2. Email daalo → email me aaye **6-digit code** se login karo.
+2. Email + password se login karo.
 3. Safari me niche **Share** (⬆️) → **Add to Home Screen** → **Add**.
 4. Ab home screen par 🏠 icon se app khulega — bilkul app jaisa.
 
@@ -76,6 +72,20 @@ App **GitHub Pages** par host hai (free) — live URL:
   Unit khud bhi badal sakte ho.
 - **Naye item/vendor** likhoge to wo apne aap suggestion me yaad ho jaate hain.
 - **Backup:** Settings se kabhi bhi **JSON backup** ya **CSV** download kar lo.
+- **Khata tab:** har party (thekedar/vendor) ka hisaab ek jagah — theka kitna/diya/advance, aur
+  side kaam ka udhaar alag. **"Udhaar chukao"** se ek hi baar me saara (ya kuch) udhaar chuk jaata
+  hai — purani entries pehle, aadha diya to baaki udhaar me hi rehta hai. Chukane ki date entry me
+  "Udhaar chukaya" ke roop me dikhti hai.
+- **Theka advance:** diya > theka amount ho to "Advance (measurement baaki)" dikhta hai (galti nahi).
+  Measurement ke baad theka amount update kar do.
+- **Aaj ki labour (Home):** roz wale mistry/majdoor chips — 1 tap = 1 din, 2 tap = ½ din. Ek save me
+  sab entries. Same din ki entry pehle se ho to app poochta hai.
+- **Eint (Hazaar unit):** Qty me **poori ginti** (5000), Rate **per hazaar** (₹7600) → ₹38,000.
+- **Personal category:** jo kharcha ghar banane ka nahi (jewellery, hospital…) — cash se katta hai par
+  "Ghar ka kul kharcha" me nahi gina jaata.
+- **Hisaab cleanup (Settings):** data me milne wali gadbad (vendor ki alag spelling, eint qty,
+  galat category, double entry) ke **sujhav**. Tick karke Apply → pehle poora JSON backup download,
+  phir badlav. **Undo** bhi Settings me. Amount kabhi nahi badalta.
 
 ---
 
@@ -88,6 +98,6 @@ Data sirf aapke Supabase project me hai, aur **Row-Level Security** se sirf aapk
 dikhta hai. anon key public ho to bhi koi aapka data nahi padh sakta (login zaroori).
 
 ## ❓ Dikkat aaye?
-- "Code nahi aaya" → Step 2 (token line) check karo; spam folder dekho.
+- "Login nahi ho raha" → email/password check karo; Supabase → Authentication → Users me user hai ya nahi dekho.
 - "Login ke baad kuch save nahi" → Step 1 ka SQL dobara run karo (re-run safe hai).
 - Balance galat? → Settings me account ka **opening balance** (shuru me kitna tha) sahi daalo.

@@ -25,13 +25,24 @@ function setLang(l) { lang = l; try { localStorage.setItem('gk_lang', l); } catc
 function tr(en, hi) { return lang === 'hi' ? (hi != null ? hi : en) : en; }
 
 /* --------------------------- Constants ---------------------------- */
-const CATEGORIES = ['Material', 'Labour', 'Theka Payment', 'Architect', 'Misc'];
+const CATEGORIES = ['Material', 'Labour', 'Theka Payment', 'Architect', 'Misc', 'Personal'];
+// Personal = ghar banane se alag kharcha (jaise jewellery, hospital). Cash/bank balance se katta hai,
+// par "ghar ka kharcha" (kul kharcha, donut, mahine-wise, budget) me nahi gina jaata.
+const NON_BUILD_CATS = ['Personal'];
+function isBuildOut(t) { return t.type === 'Out' && !NON_BUILD_CATS.includes(t.category); }
 const PAY_MODES = ['Cash', 'UPI', 'Net Banking', 'Online', 'Udhaar'];
 const BANK_MODES = ['UPI', 'Net Banking', 'Online'];   // ye modes Bank account se jaate hain
 const SOURCES = ['Bank Withdrawal', 'Salary', 'Loan', 'Borrowed', 'Savings', 'Sale', 'Other'];
 const UNITS = ['Sakda', 'Trolley', 'Tractor', 'Truck', 'Bori', 'Kg', 'Quintal', 'Ton', 'Nag', 'Number', 'Hazaar', 'Ft', 'Sq Ft', 'Din', 'Litre', 'Tanker', 'Bundle'];
 // Per-1000 pricing: in units me rate 1000 units ka hota hai (eint → Hazaar). Amount = qty × rate ÷ 1000.
+// Qty hamesha POORI GINTI (pieces) me — jaise 5000 eint, rate ₹7600 per hazaar → ₹38,000.
 const PER_1000_UNITS = ['Hazaar'];
+// "3000 pcs @ ₹8,700/1000" — per-1000 unit ko saaf dikhao (warna "3000 Hazaar" = 30 lakh eint lagta tha)
+function fmtQtyRate(t) {
+  if (!t.qty) return '';
+  if (PER_1000_UNITS.includes(t.unit)) return `${Number(t.qty).toLocaleString('en-IN')} pcs${t.rate ? ' @' + inr(t.rate) + '/1000' : ''}`;
+  return `${t.qty} ${t.unit || ''}${t.rate ? ' @' + inr(t.rate) : ''}`;
+}
 // qty × rate — magar Hazaar jaise per-1000 unit pe rate 1000 ka hai, isliye 1000 se divide.
 function lineAmount(q, r, unit) {
   q = Number(q); r = Number(r);
@@ -56,9 +67,10 @@ const DEFAULT_ITEMS = {
   'Labour': ['Majdoor 600', 'Majdoor 650', 'Mistry 900', 'Mistry 950', 'Majdoor', 'Mistry', 'Beldaar', 'Plumber', 'Electrician', 'Painter', 'Welder', 'Carpenter', 'Extra Labour'],
   'Theka Payment': [],
   'Architect': [],
-  'Misc': ['Transport / Bhada', 'Chai / Khana', 'Tools', 'Repair', 'JCB', 'Other']
+  'Misc': ['Transport / Bhada', 'Chai / Khana', 'Tools', 'Repair', 'JCB', 'Other'],
+  'Personal': []
 };
-const CAT_ICON = { 'Material': '🧱', 'Labour': '👷', 'Theka Payment': '🤝', 'Architect': '📐', 'Misc': '🧾' };
+const CAT_ICON = { 'Material': '🧱', 'Labour': '👷', 'Theka Payment': '🤝', 'Architect': '📐', 'Misc': '🧾', 'Personal': '👤' };
 
 /* ----------------------------- State ------------------------------ */
 let SB_LIB = window.supabase;     // CDN global (has createClient)
@@ -99,6 +111,35 @@ function num(v) {
   return isNaN(n) ? NaN : n;
 }
 
+/* ---- Naam (vendor/item) ek jaisa rakhna: "Tinku biana" = "Tinku Biana" ---- */
+// Comparison key: chhote akshar, sirf a-z/0-9/Hindi, space hata ke
+function nameKey(s) { return String(s || '').toLowerCase().replace(/[^a-z0-9ऀ-ॿ]+/g, ''); }
+// Har shabd bade akshar se? ("Tinku Biana" haan, "Tinku biana" nahi)
+function titledName(x) { return String(x).split(/\s+/).every((w) => !/^[a-z]/.test(w)); }
+// Kisi field ke saare naam data se: key → Title Case wali spelling, warna sabse zyada use hui
+function spellingMap(values) {
+  const cnt = {};
+  for (const v of values) { const s = String(v || '').trim(); if (!s) continue; const k = nameKey(s); if (!k) continue; (cnt[k] = cnt[k] || {})[s] = (cnt[k][s] || 0) + 1; }
+  const out = {};
+  for (const k in cnt) {
+    out[k] = Object.entries(cnt[k]).sort((a, b) => titledName(b[0]) - titledName(a[0]) || b[1] - a[1] || (b[0] > a[0] ? -1 : 1))[0][0];
+  }
+  return out;
+}
+function vendorMap() { return spellingMap([...state.transactions.map((t) => t.vendor), ...state.contracts.map((c) => c.thekedar_name), ...learned('gk_vendors')]); }
+function itemMap() { return spellingMap([...state.transactions.map((t) => t.item), ...Object.values(DEFAULT_ITEMS).flat()]); }
+// Type kiya naam agar pehle se kisi aur spelling me hai to wahi purani spelling use karo (naya variant na bane)
+function canonName(v, map) { const s = String(v || '').trim(); if (!s) return null; return map[nameKey(s)] || s; }
+function allVendors() { return Object.values(vendorMap()).sort((a, b) => a.localeCompare(b)); }
+
+/* ---- Notes ke andar chhupe markers: [[notrack]], [[sqft:{..}]], [[paid:YYYY-MM-DD]] ---- */
+function cleanNote(n) { return String(n || '').replace(/\s*\[\[[^\]]*\]\]/g, '').trim(); }
+function paidOn(n) { const m = String(n || '').match(/\[\[paid:(\d{4}-\d{2}-\d{2})\]\]/); return m ? m[1] : null; }
+function noteMarkers(n) { return (String(n || '').match(/\[\[[^\]]*\]\]/g) || []).join(' '); }
+// Form me user sirf apna text dekhta hai; save par chhupe markers wapas jod do (sqft/notrack/paid na mitein)
+function joinNote(text, markers) { const s = [String(text || '').trim(), markers || ''].filter(Boolean).join(' ').trim(); return s || null; }
+function withPaidMark(n, d) { const base = String(n || '').replace(/\s*\[\[paid:[^\]]*\]\]/g, '').trim(); return (base ? base + ' ' : '') + '[[paid:' + d + ']]'; }
+
 /* ---- Activity log — kya-kya hua + errors. Apni alag localStorage key; transactions/data ko haath nahi lagta ---- */
 function logEvent(kind, msg, level) {
   try {
@@ -137,7 +178,16 @@ function cacheGet(tbl) { try { return JSON.parse(localStorage.getItem('gk_cache_
 function cacheSet(tbl, rows) { localStorage.setItem('gk_cache_' + tbl, JSON.stringify(rows)); }
 function queueGet() { try { return JSON.parse(localStorage.getItem('gk_pending') || '[]'); } catch (_) { return []; } }
 function queueSet(q) { localStorage.setItem('gk_pending', JSON.stringify(q)); }
-function enqueue(op) { if (!op._qid) op._qid = uid(); const q = queueGet(); q.push(op); queueSet(q); }
+// Ek row ki pehchaan (table + id). Queue me har row ka sirf AAKHRI op rakhte hain — warna purana
+// version baad me sync hokar naye wale ke upar likh deta tha.
+function opKey(op) { return op.table + ':' + (op.type === 'delete' ? op.id : (op.row && op.row.id)); }
+function enqueue(op) {
+  if (!op._qid) op._qid = uid();
+  const k = opKey(op);
+  const q = queueGet().filter((x) => opKey(x) !== k);
+  q.push(op); queueSet(q);
+}
+function hasPending(key) { return queueGet().some((op) => opKey(op) === key); }
 function pendingCount() { return queueGet().length; }
 // Server fetch ke baad bhi jo writes sync nahi hui (queue me padi hain) unhe rows me wapas mila do,
 // warna user ki abhi-ki entry server-data se mit jaati thi (dikhna band ho jaati thi).
@@ -165,10 +215,13 @@ function learned(key) { try { return JSON.parse(localStorage.getItem(key) || '[]
 function itemSuggestions(cat) {
   const base = DEFAULT_ITEMS[cat] || [];
   const custom = learned('gk_items_' + cat);
-  return Array.from(new Set([...base, ...custom]));
+  const fromData = state.transactions.filter((t) => t.category === cat).map((t) => t.item).filter(Boolean);
+  const map = spellingMap([...base, ...custom, ...fromData]);
+  return Object.values(map);
 }
 // Base categories + user ki banayi hui custom categories (naya person/service)
-function allCats() { return Array.from(new Set([...CATEGORIES, ...learned('gk_categories')])); }
+// Data me jo category hai wo bhi (dusre phone pe banayi custom category yahan bhi dikhe)
+function allCats() { return Array.from(new Set([...CATEGORIES, ...learned('gk_categories'), ...state.transactions.map((t) => t.category).filter(Boolean)])); }
 
 // Rate-book: item (+ vendor/shop) ke hisaab se pichla rate yaad rakhta hai
 function rbKey(item, vendor) { return (item || '').trim().toLowerCase() + '|' + (vendor || '').trim().toLowerCase(); }
@@ -199,8 +252,22 @@ function catDefault(cat) { try { return (JSON.parse(localStorage.getItem('gk_def
 function setCatDefault(cat, acc, mode) { if (!cat) return; let d; try { d = JSON.parse(localStorage.getItem('gk_def') || '{}'); } catch (_) { d = {}; } d[cat] = { acc: acc || null, mode: mode || null }; localStorage.setItem('gk_def', JSON.stringify(d)); }
 // Recent (MRU) items/vendors for quick-pick chips
 function bumpRecent(key, val) { if (!val) return; let a; try { a = JSON.parse(localStorage.getItem(key) || '[]'); } catch (_) { a = []; } val = String(val); a = a.filter((x) => x.toLowerCase() !== val.toLowerCase()); a.unshift(val); localStorage.setItem(key, JSON.stringify(a.slice(0, 15))); }
-function recentItems(cat) { const mru = learned('gk_ri_' + cat); return (mru.length ? mru : itemSuggestions(cat)).slice(0, 6); }
-function recentVendors() { const mru = learned('gk_rv'); return (mru.length ? mru : learned('gk_vendors').slice().reverse()).slice(0, 6); }
+// MRU (is phone ka) + data se recent (taaki naye phone par bhi purane naam aayein) — spelling data wali
+function recentFromData(field, filterFn) {
+  const seen = new Set(), out = [];
+  for (const t of state.transactions) {   // transactions date-desc sorted hain
+    if (filterFn && !filterFn(t)) continue;
+    const v = (t[field] || '').trim(); const k = nameKey(v); if (!k || seen.has(k)) continue; seen.add(k); out.push(v);
+  }
+  return out;
+}
+function mergeRecent(mru, fromData, map) {
+  const seen = new Set(), out = [];
+  for (const v of [...mru, ...fromData]) { const c = canonName(v, map); const k = nameKey(c); if (!k || seen.has(k)) continue; seen.add(k); out.push(c); }
+  return out.slice(0, 6);
+}
+function recentItems(cat) { const im = itemMap(); const r = mergeRecent(learned('gk_ri_' + cat), recentFromData('item', (t) => t.category === cat), im); return r.length ? r : itemSuggestions(cat).slice(0, 6); }
+function recentVendors() { return mergeRecent(learned('gk_rv'), recentFromData('vendor', (t) => t.type === 'Out'), vendorMap()); }
 
 /* --------------------------- Supabase ----------------------------- */
 function initClient() {
@@ -211,9 +278,12 @@ function initClient() {
   } catch (e) { console.error(e); return false; }
 }
 
-let flushing = false;
+// Cloud par likhna tabhi jab asli login session ho (offline-mode wala cached session nahi)
+function canWrite() { return !!(sb && state.online && state.session && !state.session.offline); }
+let flushing = false, flushAgain = false;
 async function flushQueue() {
-  if (!sb || !state.online || flushing) return;   // ek hi flush ek baar (overlap se data loss bachao)
+  if (!canWrite()) return;
+  if (flushing) { flushAgain = true; return; }   // ek hi flush ek baar; beech me aaya kaam baad me
   flushing = true;
   try {
     let q = queueGet(); if (!q.length) return;
@@ -221,7 +291,9 @@ async function flushQueue() {
     for (const op of q) { if (!op._qid) { op._qid = uid(); mutated = true; } }
     if (mutated) queueSet(q);
     const doneIds = new Set();          // sirf jo sach me sync ho gaye, sirf unhe queue se hatao
+    const blocked = new Set();          // jis row ka op fail hua, uske baad wale ops bhi ruko (order bana rahe)
     for (const op of q) {
+      if (blocked.has(opKey(op))) continue;
       try {
         if (op.type === 'upsert') {
           const { error } = await sb.from(op.table).upsert(op.row);
@@ -231,16 +303,24 @@ async function flushQueue() {
           if (error) throw error;
         }
         if (op._qid) doneIds.add(op._qid);
-      } catch (e) { console.warn('sync fail', e); logEvent('sync', tr('Sync failed for one item — will retry', 'Ek item sync fail — retry hoga') + ': ' + msgOf(e), 'error'); }
+      } catch (e) { blocked.add(opKey(op)); console.warn('sync fail', e); logEvent('sync', tr('Sync failed for one item — will retry', 'Ek item sync fail — retry hoga') + ': ' + msgOf(e), 'error'); }
     }
     // queue dobara padho (flush ke beech jo nayi entry aayi wo bhi safe rahe) — sirf done ops hatao
     queueSet(queueGet().filter((op) => !(op._qid && doneIds.has(op._qid))));
-  } finally { flushing = false; }
+  } finally {
+    flushing = false;
+    if (flushAgain) { flushAgain = false; if (pendingCount()) setTimeout(flushQueue, 0); }
+    try { renderHeader(); } catch (_) { }
+  }
 }
 
 async function pushRow(table, row) {
   // optimistic local already done by caller; here we try server or queue
-  if (sb && state.online) {
+  const op = { type: 'upsert', table, row };
+  // Isi row ka koi purana op queue me pada hai? To seedha mat likho — queue me naya rakho (purana hat jayega)
+  // aur flush karo, taaki order sahi rahe aur purana version naye ke upar na aaye.
+  if (hasPending(opKey(op))) { enqueue(op); flushQueue(); return; }
+  if (canWrite()) {
     try { const { error } = await sb.from(table).upsert(row); if (error) throw error; return; }
     catch (e) {
       console.warn(e);
@@ -248,10 +328,12 @@ async function pushRow(table, row) {
       renderHeader(); toast(tr('Save failed — kept for retry (see Activity log)', 'Save fail — retry me rakha (Activity log dekho)'), true);
     }
   }
-  enqueue({ type: 'upsert', table, row });
+  enqueue(op);
 }
 async function deleteRow(table, id) {
-  if (sb && state.online) {
+  const op = { type: 'delete', table, id };
+  if (hasPending(opKey(op))) { enqueue(op); flushQueue(); return; }
+  if (canWrite()) {
     try { const { error } = await sb.from(table).delete().eq('id', id); if (error) throw error; return; }
     catch (e) {
       console.warn(e);
@@ -259,7 +341,7 @@ async function deleteRow(table, id) {
       renderHeader();
     }
   }
-  enqueue({ type: 'delete', table, id });
+  enqueue(op);
 }
 
 /* --------------------------- Data load ---------------------------- */
@@ -270,14 +352,26 @@ function loadCache() {
   state.transactions = cacheGet('transactions');
 }
 // Cloud se latest le kar cache update karo (network) — background me chalta hai
+// Supabase ek request me max 1000 rows deta hai — isliye pages me sab le aao (warna purani entries
+// chup-chaap gayab ho jaati aur balance galat dikhta). Order me id bhi taaki pages stable rahein.
+async function fetchAll(table, ordered) {
+  const PAGE = 1000; let out = [];
+  for (let from = 0; ; from += PAGE) {
+    const r = await ordered(sb.from(table).select('*')).order('id', { ascending: true }).range(from, from + PAGE - 1);
+    if (r.error) return { error: r.error };
+    const rows = r.data || []; out = out.concat(rows);
+    if (rows.length < PAGE) break;
+  }
+  return { data: out, error: null };
+}
 async function loadFromCloud() {
-  if (!(sb && state.online)) return;
+  if (!canWrite()) return;
   try {
     await flushQueue();
     const [a, c, t] = await Promise.all([
-      sb.from('accounts').select('*').order('created_at', { ascending: true }),
-      sb.from('contracts').select('*').order('created_at', { ascending: true }),
-      sb.from('transactions').select('*').order('date', { ascending: false }).order('created_at', { ascending: false })
+      fetchAll('accounts', (q) => q.order('created_at', { ascending: true })),
+      fetchAll('contracts', (q) => q.order('created_at', { ascending: true })),
+      fetchAll('transactions', (q) => q.order('date', { ascending: false }).order('created_at', { ascending: false }))
     ]);
     if (!a.error && a.data) {
       state.accounts = mergePending('accounts', a.data); cacheSet('accounts', state.accounts);
@@ -349,12 +443,16 @@ function sumOut(filterFn) {
   return state.transactions.filter((t) => t.type === 'Out' && (!filterFn || filterFn(t)))
     .reduce((s, t) => s + (Number(t.amount) || 0), 0);
 }
+// Naam ko chhote/bade akshar ya space ke fark se alag-alag mat gino ("Tinku biana" + "Tinku Biana" = ek row).
+// Row ka naam = sabse zyada use hui spelling. Data nahi badalta, sirf report me jodta hai.
 function groupSum(type, keyFn, rangeFilter) {
-  const map = {};
+  const map = {}, labels = {};
   for (const t of state.transactions) {
     if (t.type !== type) continue;
     if (rangeFilter && !inRange(t.date)) continue;
-    const k = keyFn(t) || '—';
+    const raw = (keyFn(t) || '').toString().trim() || '—';
+    const k = nameKey(raw) || raw;
+    (labels[k] = labels[k] || {})[raw] = (labels[k][raw] || 0) + 1;
     if (!map[k]) map[k] = { amount: 0, qty: 0, count: 0, unit: '', units: {} };
     map[k].amount += Number(t.amount) || 0;
     map[k].qty += Number(t.qty) || 0;
@@ -362,17 +460,75 @@ function groupSum(type, keyFn, rangeFilter) {
     if (t.qty && t.unit) map[k].units[t.unit] = (map[k].units[t.unit] || 0) + (Number(t.qty) || 0);
     if (!map[k].unit && t.unit) map[k].unit = t.unit;
   }
-  return Object.entries(map).map(([k, v]) => ({ key: k, ...v })).sort((a, b) => b.amount - a.amount);
+  const label = (k) => Object.entries(labels[k]).sort((a, b) => titledName(b[0]) - titledName(a[0]) || b[1] - a[1])[0][0];
+  return Object.entries(map).map(([k, v]) => ({ key: label(k), ...v })).sort((a, b) => b.amount - a.amount);
 }
-// "5 Trolley · 2 Truck" — har unit ki qty alag (jodti nahi)
+// "5 Trolley · 2 Truck" — har unit ki qty alag (jodti nahi). Per-1000 unit (Hazaar) ki qty pieces me hai.
 function fmtUnits(units) {
   const e = Object.entries(units || {}).filter(([, q]) => q);
   if (!e.length) return '';
-  return e.map(([u, q]) => `${+Number(q).toFixed(2)} ${u}`).join(' · ');
+  return e.map(([u, q]) => PER_1000_UNITS.includes(u) ? `${Number(q).toLocaleString('en-IN')} pcs` : `${+Number(q).toFixed(2)} ${u}`).join(' · ');
 }
 function contractPaid(cid) {
   return state.transactions.filter((t) => t.type === 'Out' && t.category === 'Theka Payment' && t.contract_id === cid && t.payment_mode !== 'Udhaar')
     .reduce((s, t) => s + (Number(t.amount) || 0), 0);
+}
+// Theka ki halat. Diya > amount = "advance" (kaam/measurement abhi baaki) — galti nahi, isliye laal nahi.
+function thekaStatus(c) {
+  const paid = contractPaid(c.id), amt = Number(c.theka_amount) || 0;
+  if (!amt) return { paid, amt, kind: parseRates(c.notes).length ? 'ratewise' : 'noamount', diff: 0, measured: ratesTotal(parseRates(c.notes)) };
+  if (paid > amt + 0.5) return { paid, amt, kind: 'advance', diff: paid - amt };
+  if (amt - paid < 0.5) return { paid, amt, kind: 'done', diff: 0 };
+  return { paid, amt, kind: 'baaki', diff: amt - paid };
+}
+function thekaStatusLine(s) {
+  if (s.kind === 'noamount') return { k: tr('Theka amount', 'Theka amount'), v: tr('Not set — tap to add', 'Set nahi — daalo'), color: '#8a6100' };
+  if (s.kind === 'ratewise') return { k: tr('Rate-wise theka', 'Rate-wise theka'), v: s.measured ? tr('measured ', 'measurement ') + inr(s.measured) : tr('measurement pending', 'measurement baaki'), color: '#1d6fd0' };
+  if (s.kind === 'advance') return { k: tr('Advance (measurement pending)', 'Advance (measurement baaki)'), v: inr(s.diff), color: '#1d6fd0' };
+  if (s.kind === 'done') return { k: tr('Left', 'Baaki'), v: tr('Fully paid', 'Pura'), color: '#1f7a4d' };
+  return { k: tr('Left', 'Baaki'), v: inr(s.diff), color: '#c0392b' };
+}
+
+/* ---- Khata (party-wise hisaab): theka + side kaam ka udhaar ek jagah ---- */
+function sortOldFirst(a, b) { return (a.date || '').localeCompare(b.date || '') || (a.created_at || '').localeCompare(b.created_at || ''); }
+function pendingUdhaar(key) {
+  return state.transactions.filter((t) => t.type === 'Out' && t.payment_mode === 'Udhaar' && (!key || nameKey(t.vendor) === key)).sort(sortOldFirst);
+}
+function parties() {
+  const vm = vendorMap(), map = {};
+  const get = (name) => { const k = nameKey(name); if (!k) return null; return map[k] || (map[k] = { key: k, name: canonName(name, vm), contracts: [], udhaar: 0, udhaarN: 0, paidTotal: 0, settled: 0, last: '' }); };
+  for (const c of state.contracts) { const p = get(c.thekedar_name || c.kaam); if (p) p.contracts.push(c); }
+  for (const t of state.transactions) {
+    if (t.type !== 'Out' || !t.vendor) continue;
+    const p = map[nameKey(t.vendor)] || ((t.payment_mode === 'Udhaar' || paidOn(t.notes)) ? get(t.vendor) : null);
+    if (!p) continue;
+    const a = Number(t.amount) || 0;
+    if (t.payment_mode === 'Udhaar') { p.udhaar += a; p.udhaarN++; } else p.paidTotal += a;
+    if (paidOn(t.notes)) p.settled += a;
+    if ((t.date || '') > p.last) p.last = t.date;
+  }
+  return Object.values(map).sort((a, b) => (b.udhaar > 0) - (a.udhaar > 0) || b.last.localeCompare(a.last));
+}
+// Udhaar chukana: purani entries pehle. Poori chuki entry → wahi entry paid (mode/account) + [[paid:date]].
+// Aakhri entry aadhi chuki → utni paid, baaki ki nayi Udhaar entry (same date/item/vendor). Amount kabhi nahi khota.
+async function settleUdhaar(list, amount, accId, mode, payDate) {
+  let left = money(amount); let n = 0;
+  for (const t of list.slice().sort(sortOldFirst)) {
+    if (left <= 0) break;
+    const total = money(Number(t.amount) || 0);
+    if (left >= total) {
+      await saveTx(Object.assign({}, t, { payment_mode: mode, account_id: accId, notes: withPaidMark(t.notes, payDate) }), false, true);
+      left = money(left - total); n++;
+    } else {
+      const paidRec = Object.assign({}, t, { amount: left, payment_mode: mode, account_id: accId, notes: withPaidMark(t.notes, payDate) });
+      const remRec = Object.assign({}, t, { id: uid(), amount: money(total - left), payment_mode: 'Udhaar', account_id: null });
+      delete remRec.created_at;
+      await saveTx(paidRec, false, true); await saveTx(remRec, true, true);
+      left = 0; n++;
+    }
+  }
+  logEvent('entry', tr('Udhaar settled', 'Udhaar chukaya') + ': ' + inr(amount) + ' · ' + n + ' ' + tr('entries', 'entries') + ' · ' + mode, 'info');
+  return n;
 }
 
 /* ============================ UI: SHELL =========================== */
@@ -395,7 +551,7 @@ function buildShell() {
   `;
   $('#nav').innerHTML = [
     ['dashboard', '🏠', tr('Home', 'Home')], ['entries', '📒', tr('Entries', 'Entries')], ['reports', '📊', tr('Reports', 'Reports')],
-    ['theka', '🤝', tr('Theka', 'Theka')], ['settings', '⚙️', tr('Settings', 'Settings')]
+    ['theka', '📒', tr('Khata', 'Khata')], ['settings', '⚙️', tr('Settings', 'Settings')]
   ].map(([v, i, l]) => `<button class="nav-item" data-view="${v}"><span class="ico">${i}</span>${l}</button>`).join('');
   $('#nav').addEventListener('click', (e) => { const b = e.target.closest('.nav-item'); if (b) show(b.dataset.view); });
 }
@@ -433,7 +589,7 @@ function renderScreen() {
 }
 
 /* ====================== Charts (SVG, no deps) ===================== */
-const CAT_COLOR = { 'Material': '#1c7a49', 'Labour': '#1d6fd0', 'Theka Payment': '#e3a008', 'Architect': '#8b5cf6', 'Misc': '#94a3b8' };
+const CAT_COLOR = { 'Material': '#1c7a49', 'Labour': '#1d6fd0', 'Theka Payment': '#e3a008', 'Architect': '#8b5cf6', 'Misc': '#94a3b8', 'Personal': '#db2777' };
 let dashRange = 'month';   // dashboard donut range: month | all
 
 function inrShort(n) {
@@ -449,7 +605,7 @@ function monthShort(m) { return ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul'
 function catSegments(monthOnly) {
   const map = {};
   for (const t of state.transactions) {
-    if (t.type !== 'Out') continue;
+    if (!isBuildOut(t)) continue;
     if (monthOnly && !thisMonth(t.date)) continue;
     const k = t.category || 'Misc';
     map[k] = (map[k] || 0) + (Number(t.amount) || 0);
@@ -463,7 +619,7 @@ function last6MonthsSpend() {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const y = d.getFullYear(), m = d.getMonth(); let total = 0;
     for (const t of state.transactions) {
-      if (t.type !== 'Out') continue;
+      if (!isBuildOut(t)) continue;
       const td = new Date(t.date + 'T00:00:00');
       if (td.getFullYear() === y && td.getMonth() === m) total += Number(t.amount) || 0;
     }
@@ -504,37 +660,96 @@ function barSVG(bars) {
 }
 
 /* ========================= SCREEN: DASHBOARD ====================== */
+function lastMonth(iso) { const d = new Date(iso + 'T00:00:00'); const n = new Date(); const p = new Date(n.getFullYear(), n.getMonth() - 1, 1); return d.getFullYear() === p.getFullYear() && d.getMonth() === p.getMonth(); }
+function getBudget() { const b = Number(localStorage.getItem('gk_budget')); return b > 0 ? b : 0; }
+
+// "Aaj ki labour": pichle 60 din me jis party ki Din-wali labour sabse recent hai, uske items (rate ke saath)
+function quickLabourSource() {
+  const d = new Date(); d.setDate(d.getDate() - 60);
+  const since = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+  const lab = state.transactions.filter((t) => t.type === 'Out' && t.category === 'Labour' && t.vendor && t.item && t.date >= since && Number(t.rate) > 0 && t.unit === 'Din');
+  if (!lab.length) return null;
+  // Jis party ki sabse zyada din-wali labour entries hain (ek-aadh baar wala vendor nahi)
+  const vc = {};
+  for (const t of lab) { const k = nameKey(t.vendor); vc[k] = (vc[k] || 0) + 1; }
+  const vk = Object.keys(vc).sort((a, b) => vc[b] - vc[a])[0];
+  if (vc[vk] < 3) return null;
+  const mine = lab.filter((t) => nameKey(t.vendor) === vk);
+  const im = itemMap(), byItem = {};
+  for (const t of mine) {   // date-desc order → pehla mila = latest rate
+    const k = nameKey(t.item);
+    if (!byItem[k]) byItem[k] = { item: canonName(t.item, im), rate: Number(t.rate), count: 0 };
+    byItem[k].count++;
+  }
+  const items = Object.values(byItem).filter((x) => x.count >= 2).sort((a, b) => b.count - a.count).slice(0, 8);
+  if (!items.length) return null;
+  return { vendor: canonName(mine[0].vendor, vendorMap()), mode: mine[0].payment_mode || 'Udhaar', items };
+}
+
+function denaBaakiRows() {
+  const rows = [];
+  for (const p of parties()) {
+    if (p.udhaar > 0) rows.push({ party: p.key, label: `${p.name} — ${tr('side work udhaar', 'side kaam udhaar')} (${p.udhaarN})`, v: inr(p.udhaar), color: '#8a6100' });
+  }
+  for (const c of state.contracts) {
+    const s = thekaStatus(c), nm = c.thekedar_name || c.kaam || tr('Theka', 'Theka'), key = nameKey(c.thekedar_name || c.kaam);
+    if (s.kind === 'baaki') rows.push({ party: key, label: `${nm} — ${tr('theka left', 'theka baaki')}`, v: inr(s.diff), color: '#c0392b' });
+    else if (s.kind === 'noamount') rows.push({ party: key, label: `${nm} — ${tr('theka amount not set', 'theka amount set nahi')}`, v: tr('set', 'daalo'), color: '#8a6100' });
+    else if (s.kind === 'ratewise') rows.push({ party: key, label: `${nm} — ${tr('rate-wise, advance given', 'rate-wise, advance diya')}`, v: inr(s.paid), color: '#1d6fd0' });
+    else if (s.kind === 'advance') rows.push({ party: key, label: `${nm} — ${tr('advance (measurement pending)', 'advance (measurement baaki)')}`, v: inr(s.diff), color: '#1d6fd0' });
+  }
+  return rows;
+}
+
 function screenDashboard() {
   const cashTracked = anyTracked('Cash'), bankTracked = anyTracked('Bank');
   // Card = tracked accounts ka balance. Untracked account ka kharcha alag se Reports/Settings me
   // "Spent" dikhta hai — use balance me se ghatana galat tha (balance negative ho jaata tha).
   const cashVal = cashTracked ? balByType('Cash') : spentByType('Cash');
   const bankVal = bankTracked ? balByType('Bank') : spentByType('Bank');
-  const kul = sumOut(); const isMah = sumOut((t) => thisMonth(t.date));
-  const udhaar = sumOut((t) => t.payment_mode === 'Udhaar');
+  const kul = sumOut(isBuildOut);
+  const isMah = sumOut((t) => isBuildOut(t) && thisMonth(t.date));
+  const pichla = sumOut((t) => isBuildOut(t) && lastMonth(t.date));
+  const personal = sumOut((t) => NON_BUILD_CATS.includes(t.category));
+  const budget = getBudget();
   const recent = state.transactions.slice(0, 6);
   const segs = catSegments(dashRange === 'month');
   const segTotal = segs.reduce((s, x) => s + x.value, 0);
   const months = last6MonthsSpend();
   const hasMonthData = months.some((m) => m.value > 0);
+  const dena = denaBaakiRows();
+  const ql = quickLabourSource();
 
   const html = `
     <div class="screen">
+      <div class="actions compact">
+        <button class="action-btn out" data-act="out"><span class="ico">💸</span>${tr('Add Expense', 'Kharcha daalo')}</button>
+        <button class="action-btn in" data-act="in"><span class="ico">➕</span>${tr('Money In', 'Paisa Aaya')}</button>
+        <button class="action-btn transfer" data-act="transfer"><span class="ico">🔁</span>${tr('Transfer', 'Transfer')}</button>
+      </div>
+
+      ${ql ? `<div class="report-card ql-card">
+        <h4>👷 ${tr('Today\'s labour', 'Aaj ki labour')} — ${esc(ql.vendor)}</h4>
+        <div class="muted" style="margin:-6px 0 8px">${tr('Tap once = 1 day, twice = ½ day, again = off', '1 tap = 1 din, 2 tap = ½ din, 3 tap = hatao')} · ${esc(ql.mode)}</div>
+        <div class="chips" id="ql-chips">${ql.items.map((it, i) => `<button type="button" class="chip sm" data-i="${i}">${esc(it.item)}</button>`).join('')}</div>
+        <div class="ql-foot"><input id="ql-date" type="date" value="${today()}" /><button class="btn-secondary" id="ql-save" disabled>${tr('Save', 'Save')}</button></div>
+      </div>` : ''}
+
       <div class="balance-row">
         <div class="bal-card cash"><div class="label">💵 ${cashTracked ? tr('Cash in hand', 'Cash haath me') : tr('Cash spent', 'Cash se gaya')}</div><div class="amt">${inr(cashVal)}</div></div>
         <div class="bal-card bank"><div class="label">🏦 ${bankTracked ? tr('In bank', 'Bank me') : tr('Bank spent', 'Bank se gaya')}</div><div class="amt">${inr(bankVal)}</div></div>
       </div>
       <div class="stat-row">
-        <div class="stat"><div class="label">${tr('Total spent', 'Kul kharcha')}</div><div class="amt spend">${inr(kul)}</div></div>
-        <div class="stat"><div class="label">${tr('This month', 'Is mahine')}</div><div class="amt spend">${inr(isMah)}</div></div>
+        <div class="stat"><div class="label">${tr('House total spent', 'Ghar ka kul kharcha')}</div><div class="amt spend">${inr(kul)}</div>${personal > 0 ? `<div class="sub-note">+ ${tr('Personal', 'Personal')} ${inr(personal)}</div>` : ''}</div>
+        <div class="stat"><div class="label">${tr('This month', 'Is mahine')}</div><div class="amt spend">${inr(isMah)}</div><div class="sub-note">${tr('Last month', 'Pichle mahine')} ${inr(pichla)}</div></div>
       </div>
-      ${udhaar > 0 ? `<div class="stat-row"><div class="stat" style="grid-column:1/-1"><div class="label">⚠️ ${tr('Udhaar pending (to pay)', 'Udhaar baaki (dena hai)')}</div><div class="amt" style="color:#8a6100">${inr(udhaar)}</div></div></div>` : ''}
 
-      <div class="actions">
-        <button class="action-btn out" data-act="out"><span class="ico">💸</span>${tr('Expense (Money Out)', 'Kharcha (Paisa Gaya)')}</button>
-        <button class="action-btn in" data-act="in"><span class="ico">➕</span>${tr('Money In', 'Paisa Aaya')}</button>
-        <button class="action-btn transfer" data-act="transfer"><span class="ico">🔁</span>${tr('Transfer', 'Transfer')}</button>
-      </div>
+      ${budget ? (() => { const pct = Math.min(100, Math.round(kul / budget * 100)); const left = budget - kul; return `<div class="report-card" style="margin-top:12px"><h4>🏠 ${tr('Budget', 'Budget')}</h4>
+        <div class="bar ${kul > budget ? 'red' : ''}"><span style="width:${pct}%"></span></div>
+        <div class="muted" style="margin-top:6px">${inr(kul)} / ${inr(budget)} · ${pct}% · ${left >= 0 ? tr('left ', 'baaki ') + inr(left) : tr('over by ', 'budget se upar ') + inr(-left)}</div></div>`; })() : ''}
+
+      ${dena.length ? `<div class="report-card" style="margin-top:12px"><h4>🧾 ${tr('To pay / pending', 'Dena baaki / pending')}</h4>
+        ${dena.map((r) => `<div class="rrow tap" data-party="${esc(r.party)}"><div class="k">${esc(r.label)}</div><div class="v" style="color:${r.color}">${esc(r.v)}</div></div>`).join('')}</div>` : ''}
 
       <div class="report-card chart-card">
         <div class="chart-head">
@@ -560,9 +775,42 @@ function screenDashboard() {
     });
     const rt = $('#dash-range');
     if (rt) rt.querySelectorAll('button').forEach((b) => b.onclick = () => { dashRange = b.dataset.r; renderScreen(); });
+    $('#screen').querySelectorAll('.rrow[data-party]').forEach((el) => el.onclick = () => openParty(el.dataset.party));
+    if (ql) bindQuickLabour(ql);
     bindEntryRows();
   };
   return { html, bind };
+}
+
+function bindQuickLabour(ql) {
+  const qty = ql.items.map(() => 0);
+  const chips = $('#ql-chips'), saveBtn = $('#ql-save');
+  const paint = () => {
+    let total = 0, n = 0;
+    chips.querySelectorAll('.chip').forEach((c) => {
+      const i = +c.dataset.i, q = qty[i], it = ql.items[i];
+      c.classList.toggle('active', q > 0);
+      c.textContent = it.item + (q === 1 ? ' · 1' : q === 0.5 ? ' · ½' : '');
+      if (q) { total += lineAmount(q, it.rate, 'Din'); n++; }
+    });
+    saveBtn.disabled = !n;
+    saveBtn.textContent = n ? `${tr('Save', 'Save')} ${n} · ${inr(total)}` : tr('Save', 'Save');
+  };
+  chips.querySelectorAll('.chip').forEach((c) => c.onclick = () => { const i = +c.dataset.i; qty[i] = qty[i] === 0 ? 1 : qty[i] === 1 ? 0.5 : 0; paint(); });
+  saveBtn.onclick = async () => {
+    const date = $('#ql-date').value || today();
+    const accId = ql.mode === 'Udhaar' ? null : accountForMode(ql.mode, null);
+    const recs = ql.items.map((it, i) => qty[i] ? {
+      id: uid(), type: 'Out', date, category: 'Labour', item: it.item, qty: qty[i], unit: 'Din', rate: it.rate,
+      amount: money(lineAmount(qty[i], it.rate, 'Din')), vendor: ql.vendor, payment_mode: ql.mode, account_id: accId, notes: null, contract_id: null
+    } : null).filter(Boolean);
+    const dups = recs.filter((r) => findDup(r, true));
+    if (dups.length && !confirm(tr('Already entered for this date: ', 'Is date ki ye entry pehle se hai: ') + dups.map((d) => d.item).join(', ') + '\n\n' + tr('Add again anyway?', 'Fir bhi dobara add karein?'))) return;
+    for (const r of recs) await saveTx(r, true, true);
+    toast(tr(recs.length + ' labour entries saved ✅', recs.length + ' labour entries save ✅'));
+    refresh();
+  };
+  paint();
 }
 
 function emptyState(msg) { return `<div class="empty"><div class="big">📭</div>${esc(msg)}</div>`; }
@@ -574,7 +822,7 @@ function entryRow(t) {
     ico = CAT_ICON[t.category] || '🧾';
     title = t.category === 'Theka Payment' ? (tr('Theka', 'Theka') + (t.vendor ? ' — ' + t.vendor : '')) : (t.item || t.category || tr('Expense', 'Kharcha'));
     const bits = [];
-    if (t.qty) bits.push(`${t.qty} ${t.unit || ''}${t.rate ? ' @' + inr(t.rate) : ''}`);
+    if (t.qty) bits.push(fmtQtyRate(t));
     if (t.vendor && t.category !== 'Theka Payment') bits.push(t.vendor);
     if (t.account_id) bits.push(accName(t.account_id));
     meta = bits.filter(Boolean).join(' · ');
@@ -653,6 +901,8 @@ function screenReports() {
   const byMode = groupSum('Out', (t) => t.payment_mode, rf);
   const totalIn = aaya.reduce((s, x) => s + x.amount, 0);
   const totalOut = byCat.reduce((s, x) => s + x.amount, 0);
+  const buildOut = state.transactions.filter((t) => isBuildOut(t) && (!rf || inRange(t.date))).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const bankUntracked = state.accounts.some((a) => a.type === 'Bank' && !accTracked(a));
   const udhaarByVendor = (() => {
     const m = {}; state.transactions.filter((t) => t.type === 'Out' && t.payment_mode === 'Udhaar').forEach((t) => { const k = t.vendor || '—'; m[k] = (m[k] || 0) + (Number(t.amount) || 0); });
     return Object.entries(m).map(([k, v]) => ({ key: k, amount: v })).sort((a, b) => b.amount - a.amount);
@@ -670,10 +920,10 @@ function screenReports() {
   };
 
   const thekaRows = state.contracts.map((c) => {
-    const paid = contractPaid(c.id); const amt = Number(c.theka_amount) || 0; const baaki = amt - paid;
+    const s = thekaStatus(c), sl = thekaStatusLine(s);
     return `<div class="rrow"><div class="k">${esc(c.thekedar_name || c.kaam || tr('Theka', 'Theka'))}<small>${esc(c.kaam || '')}</small></div>
-      <div class="v">${inr(paid)} / ${inr(amt)}<br><small style="color:${baaki > 0 ? '#c0392b' : '#1f7a4d'}">${baaki > 0 ? tr('Left ', 'Baaki ') + inr(baaki) : tr('Paid', 'Pura')}</small></div></div>
-      <div class="bar"><span style="width:${amt ? Math.min(100, Math.round(paid / amt * 100)) : 0}%"></span></div>`;
+      <div class="v">${inr(s.paid)} / ${s.amt ? inr(s.amt) : '—'}<br><small style="color:${sl.color}">${esc(sl.k)}: ${esc(sl.v)}</small></div></div>
+      <div class="bar"><span style="width:${s.amt ? Math.min(100, Math.round(s.paid / s.amt * 100)) : 0}%"></span></div>`;
   }).join('');
 
   const html = `
@@ -692,7 +942,9 @@ function screenReports() {
         <h4>🔁 ${rangeLabel()} — ${tr('In vs Out', 'Aaya vs Gaya')}</h4>
         <div class="rrow"><div class="k">${tr('Total In', 'Total Aaya (In)')}</div><div class="v" style="color:#1f7a4d">${inr(totalIn)}</div></div>
         <div class="rrow"><div class="k">${tr('Total Out (spent)', 'Total Gaya (Kharcha)')}</div><div class="v" style="color:#c0392b">${inr(totalOut)}</div></div>
-        <div class="total-line"><span>${tr('Savings / Difference', 'Bachat / Antar')}</span><span>${inr(totalIn - totalOut)}</span></div>
+        <div class="total-line"><span>${tr('In − Out', 'Aaya − Gaya')}</span><span>${inr(totalIn - totalOut)}</span></div>
+        ${bankUntracked ? `<div class="muted" style="margin-top:6px">${tr('Money coming into Bank is not tracked, so this is not your savings.', 'Bank me aaya paisa track nahi hota, isliye ye bachat nahi hai.')}</div>` : ''}
+        <div class="rrow" style="margin-top:6px"><div class="k">🏠 ${tr('House (construction) spend', 'Ghar (construction) kharcha')}<small>${tr('excludes Personal', 'Personal ke bina')}</small></div><div class="v">${inr(buildOut)}</div></div>
       </div>
 
       ${card('💰 ' + tr('Where money came from', 'Paisa kahan se aaya'), aaya, { bar: true })}
@@ -714,35 +966,120 @@ function screenReports() {
   return { html, bind };
 }
 
-/* ========================== SCREEN: THEKA ========================= */
+/* ========================== SCREEN: KHATA (theka + party hisaab) ========================= */
+// Har party (thekedar / vendor) ka ek jagah hisaab: theka kitna-diya-advance, side kaam ka udhaar,
+// aur ek tap me udhaar chukana. Theka alag, side labour (Udhaar) alag — dono mix nahi hote.
 function screenTheka() {
+  const ps = parties().filter((p) => p.contracts.length || p.udhaar > 0 || p.settled > 0);
+  const card = (p) => {
+    const lines = [];
+    for (const c of p.contracts) {
+      const s = thekaStatus(c), sl = thekaStatusLine(s);
+      lines.push(`<div class="rrow"><div class="k">🤝 ${tr('Theka', 'Theka')}${c.kaam ? ` <small>${esc(c.kaam)}</small>` : ''}</div><div class="v">${inr(s.paid)} / ${s.amt ? inr(s.amt) : '—'}</div></div>`);
+      lines.push(`<div class="rrow"><div class="k">${esc(sl.k)}</div><div class="v" style="color:${sl.color}">${esc(sl.v)}</div></div>`);
+    }
+    if (p.udhaar > 0) lines.push(`<div class="rrow"><div class="k">👷 ${tr('Side work udhaar', 'Side kaam udhaar')}<small>${p.udhaarN} ${tr('entries', 'entries')}</small></div><div class="v" style="color:#8a6100">${inr(p.udhaar)}</div></div>`);
+    else if (p.settled > 0) lines.push(`<div class="rrow"><div class="k">👷 ${tr('Side work udhaar', 'Side kaam udhaar')}</div><div class="v" style="color:#1f7a4d">${tr('Settled', 'Chuk gaya')} ✅</div></div>`);
+    return `<div class="report-card tap" data-party="${esc(p.key)}"><h4>${esc(p.name)}</h4>${lines.join('')}</div>`;
+  };
   const html = `
     <div class="screen">
-      <h2 class="title">${tr('Theka (Contract)', 'Theka (Contract)')}</h2>
+      <h2 class="title">${tr('Khata (party-wise)', 'Khata (party-wise hisaab)')}</h2>
+      <p class="muted" style="margin:-6px 2px 12px">${tr('Theka and side-work udhaar are kept separate. Tap a party for full hisaab and to settle udhaar.', 'Theka aur side kaam ka udhaar alag-alag. Party pe tap karo — poora hisaab + udhaar chukao.')}</p>
       <button class="btn-secondary" id="add-theka" style="width:100%;margin-bottom:12px">➕ ${tr('New Theka', 'Naya Theka')}</button>
-      <div class="list">
-        ${state.contracts.length ? state.contracts.map((c) => {
-          const paid = contractPaid(c.id), amt = Number(c.theka_amount) || 0, baaki = amt - paid;
-          const pct = amt ? Math.min(100, Math.round(paid / amt * 100)) : 0;
-          return `<div class="report-card" data-id="${c.id}" style="cursor:pointer">
-            <h4>🤝 ${esc(c.thekedar_name || tr('Thekedar', 'Thekedar'))}</h4>
-            ${c.kaam ? `<div class="muted" style="margin:-4px 0 4px">${esc(c.kaam)}</div>` : ''}
-            ${sqftLabel(c.notes) ? `<div class="muted" style="margin:0 0 8px">📐 ${esc(sqftLabel(c.notes))}</div>` : ''}
-            <div class="rrow"><div class="k">${tr('Theka amount', 'Theka amount')}</div><div class="v">${inr(amt)}</div></div>
-            <div class="rrow"><div class="k">${tr('Paid', 'Diya')}</div><div class="v" style="color:#1f7a4d">${inr(paid)}</div></div>
-            <div class="rrow"><div class="k">${tr('Left', 'Baaki')}</div><div class="v" style="color:${baaki > 0 ? '#c0392b' : '#1f7a4d'}">${inr(baaki)}</div></div>
-            <div class="bar"><span style="width:${pct}%"></span></div>
-          </div>`;
-        }).join('') : emptyState(tr('No theka yet. Add one with "New Theka".', 'Abhi koi theka nahi. "Naya Theka" se add karein.'))}
-      </div>
+      <div class="list">${ps.length ? ps.map(card).join('') : emptyState(tr('No theka or udhaar yet.', 'Abhi koi theka ya udhaar nahi.'))}</div>
     </div>`;
   const bind = () => {
     $('#add-theka').onclick = () => openThekaForm();
-    $('#screen').querySelectorAll('.report-card[data-id]').forEach((el) => el.onclick = () => {
-      const c = state.contracts.find((x) => x.id === el.dataset.id); if (c) openThekaForm(c);
-    });
+    $('#screen').querySelectorAll('[data-party]').forEach((el) => el.onclick = () => openParty(el.dataset.party));
   };
   return { html, bind };
+}
+
+function openParty(key) {
+  const p = parties().find((x) => x.key === key);
+  if (!p) return;
+  const pend = pendingUdhaar(key);
+  const all = state.transactions.filter((t) => t.type === 'Out' && nameKey(t.vendor) === key);
+  const settledByDate = {};
+  for (const t of all) { const d = paidOn(t.notes); if (d) { const s = settledByDate[d] || (settledByDate[d] = { amt: 0, n: 0 }); s.amt += Number(t.amount) || 0; s.n++; } }
+  const thekaIds = new Set(p.contracts.map((c) => c.id));
+  // Theka ka diya theke ke link se (vendor naam kuch bhi likha ho) — Theka screen jaisa hi number
+  const thekaPaid = p.contracts.reduce((s, c) => s + contractPaid(c.id), 0);
+  const otherPaid = all.filter((t) => t.payment_mode !== 'Udhaar' && !(t.category === 'Theka Payment' && thekaIds.has(t.contract_id))).reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const inner = `
+    <h3>📒 ${esc(p.name)}</h3>
+    ${p.contracts.map((c) => { const s = thekaStatus(c), sl = thekaStatusLine(s); return `<div class="report-card">
+      <h4>🤝 ${tr('Theka', 'Theka')}${c.kaam ? ' — ' + esc(c.kaam) : ''}</h4>
+      ${sqftLabel(c.notes) ? `<div class="muted" style="margin:-4px 0 6px">📐 ${esc(sqftLabel(c.notes))}</div>` : ''}
+      <div class="rrow"><div class="k">${tr('Theka amount', 'Theka amount')}</div><div class="v">${s.amt ? inr(s.amt) : '—'}</div></div>
+      <div class="rrow"><div class="k">${tr('Paid', 'Diya')}</div><div class="v" style="color:#1f7a4d">${inr(s.paid)}</div></div>
+      <div class="rrow"><div class="k">${esc(sl.k)}</div><div class="v" style="color:${sl.color}">${esc(sl.v)}</div></div>
+      ${(() => { const rl = parseRates(c.notes); if (!rl.length) return ''; return `<div class="section-label" style="margin-top:12px">${tr('Rate list', 'Rate list')}</div>` +
+        rl.map((l) => `<div class="rrow"><div class="k">${esc(l.n)}<small>${inr(l.r)} ${esc(RATE_UNITS[l.u] || '')}${Number(l.q) ? ' × ' + l.q : ''}</small></div><div class="v">${Number(l.q) ? inr(rateLineAmt(l)) : '<span class="muted">' + tr('pending', 'baaki') + '</span>'}</div></div>`).join('') +
+        (ratesTotal(rl) ? `<div class="total-line"><span>${tr('Measured total', 'Measurement total')}</span><span>${inr(ratesTotal(rl))}</span></div>` : ''); })()}
+      ${s.kind === 'advance' ? `<div class="muted" style="margin-top:6px">${tr('Paid more than current theka amount — normal if more work/measurement is still to be added. Update the theka amount after measurement.', 'Theka amount se zyada diya — normal hai agar aur kaam/measurement abhi add hona hai. Measurement ke baad theka amount update kar dena.')}</div>` : ''}
+      <button class="btn-secondary" data-edit-theka="${esc(c.id)}" style="width:100%;margin-top:10px">✏️ ${tr('Edit theka / measurement', 'Theka / measurement edit')}</button>
+    </div>`; }).join('')}
+    ${pend.length || Object.keys(settledByDate).length ? `<div class="report-card">
+      <h4>👷 ${tr('Side work (outside theka)', 'Side kaam (theke se alag)')}</h4>
+      <div class="rrow"><div class="k">${tr('Udhaar pending', 'Udhaar baaki')}<small>${pend.length} ${tr('entries', 'entries')}${pend.length ? ' · ' + tr('from ', '') + fmtDate(pend[0].date) + tr('', ' se') : ''}</small></div><div class="v" style="color:#8a6100">${inr(p.udhaar)}</div></div>
+      ${Object.keys(settledByDate).sort().reverse().map((d) => `<div class="rrow"><div class="k">✅ ${tr('Settled on', 'Chukaya')} ${fmtDate(d)}<small>${settledByDate[d].n} ${tr('entries', 'entries')}</small></div><div class="v" style="color:#1f7a4d">${inr(settledByDate[d].amt)}</div></div>`).join('')}
+      ${pend.length ? `<button class="btn-primary" id="bulk-settle">💸 ${tr('Settle udhaar', 'Udhaar chukao')} (${inr(p.udhaar)})</button>` : ''}
+    </div>` : ''}
+    <div class="report-card">
+      <h4>🧮 ${tr('Total paid to', 'Kul diya')} ${esc(p.name)}</h4>
+      ${p.contracts.length ? `<div class="rrow"><div class="k">${tr('Theka payments', 'Theka payments')}</div><div class="v">${inr(thekaPaid)}</div></div>` : ''}
+      <div class="rrow"><div class="k">${tr('Other payments (side work, material…)', 'Baaki payments (side kaam, material…)')}</div><div class="v">${inr(otherPaid)}</div></div>
+      <div class="total-line"><span>${tr('Total', 'Total')}</span><span>${inr(thekaPaid + otherPaid)}</span></div>
+    </div>
+    ${pend.length ? `<div class="section-label">${tr('Pending udhaar entries', 'Baaki udhaar entries')}</div><div class="list" id="party-pend">${pend.slice().reverse().map(entryRow).join('')}</div>` : ''}
+    <button class="btn-ghost" id="cancel">${tr('Close', 'Band karo')}</button>`;
+  openSheet(inner, (root) => {
+    root.querySelector('#cancel').onclick = closeSheet;
+    root.querySelectorAll('[data-edit-theka]').forEach((b) => b.onclick = () => { const c = state.contracts.find((x) => x.id === b.dataset.editTheka); closeSheet(); if (c) openThekaForm(c); });
+    const bs = root.querySelector('#bulk-settle'); if (bs) bs.onclick = () => { closeSheet(); openBulkSettle(key); };
+    const pl = root.querySelector('#party-pend'); if (pl) bindEntryRows(pl);
+  });
+}
+
+function openBulkSettle(key) {
+  const pend = pendingUdhaar(key); if (!pend.length) return;
+  const name = canonName(pend[0].vendor, vendorMap());
+  const total = money(pend.reduce((s, t) => s + (Number(t.amount) || 0), 0));
+  const inner = `
+    <h3>💸 ${tr('Settle udhaar', 'Udhaar chukao')} — ${esc(name)}</h3>
+    <p class="muted" style="margin:0 2px 8px">${tr('Total pending', 'Kul baaki')} <b>${inr(total)}</b> (${pend.length} ${tr('entries', 'entries')}). ${tr('Oldest entries are settled first. Amounts are never lost — a partial payment leaves the rest as udhaar.', 'Purani entries pehle chukti hain. Amount kabhi nahi khota — aadha diya to baaki udhaar me hi rahega.')}</p>
+    <div class="field"><label>${tr('Amount paid ₹', 'Kitna diya ₹')}</label><input id="b-amt" type="text" inputmode="decimal" value="${total}" /><div class="amt-preview" id="b-prev"></div></div>
+    <div class="field"><label>${tr('Mode', 'Mode')}</label>${chipsHtml('bmode', PAY_MODES.filter((m) => m !== 'Udhaar'), 'Cash')}</div>
+    <div class="field"><label>${tr('Paid from (account)', 'Kahan se diya (account)')}</label><select id="b-acc">${accOptions(accountForMode('Cash', null))}</select></div>
+    <div class="field"><label>${tr('Date paid', 'Kis din diya')}</label><input id="b-date" type="date" value="${today()}" /></div>
+    <button class="btn-primary" id="save">✅ ${tr('Mark paid', 'Paid mark karo')}</button>
+    <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
+  openSheet(inner, (root) => {
+    const amtEl = root.querySelector('#b-amt'), prev = root.querySelector('#b-prev'), accEl = root.querySelector('#b-acc');
+    const showPrev = () => {
+      const paid = num(amtEl.value);
+      if (isNaN(paid) || paid <= 0) { prev.textContent = ''; return; }
+      let left = paid, n = 0; for (const t of pend) { if (left <= 0) break; left -= Number(t.amount) || 0; n++; }
+      prev.innerHTML = paid >= total ? `<b>${tr('All', 'Saari')} ${pend.length} ${tr('entries settled', 'entries chuk jayengi')}</b>` + (paid > total ? ` · ${tr('extra', 'extra')} ${inr(paid - total)} ${tr('not used', 'use nahi hoga')}` : '')
+        : `${n} ${tr('entries (oldest first)', 'entries (purani pehle)')} · ${tr('Remaining udhaar', 'Baaki udhaar')}: <b>${inr(total - paid)}</b>`;
+    };
+    amtEl.oninput = showPrev; showPrev();
+    bindChips(root, 'bmode', (m) => { const a = accountForMode(m, accEl.value); if (a) accEl.value = a; });
+    root.querySelector('#cancel').onclick = closeSheet;
+    root.querySelector('#save').onclick = async () => {
+      let paid = num(amtEl.value);
+      if (isNaN(paid) || paid <= 0) return toast(tr('Enter amount paid', 'Kitna diya wo daalo'), true);
+      paid = money(Math.min(paid, total));
+      const acc = accEl.value; if (!acc) return toast(tr('Choose the paying account', 'Account chuno jahan se diya'), true);
+      const mode = chipVal(root, 'bmode'); const d = root.querySelector('#b-date').value || today();
+      if (!confirm(tr(`${inr(paid)} paid to ${name} via ${mode} on ${fmtDate(d)}. Mark as paid?`, `${name} ko ${inr(paid)} diye (${mode}, ${fmtDate(d)}). Paid mark karein?`))) return;
+      closeSheet();
+      await settleUdhaar(pend, paid, acc, mode, d);
+      refresh(); toast(tr('Udhaar updated ✅', 'Udhaar update ho gaya ✅'));
+    };
+  });
 }
 
 /* ========================= SCREEN: SETTINGS ======================= */
@@ -767,6 +1104,14 @@ function screenSettings() {
           <div class="amt">›</div></div>`; }).join('')}
       </div>
       <button class="btn-secondary" id="add-acc" style="width:100%;margin-top:10px">➕ ${tr('New Account', 'Naya Account')}</button>
+
+      <div class="section-label">${tr('House budget', 'Ghar ka budget')}</div>
+      <div style="display:flex;gap:8px"><input id="budget-in" type="text" inputmode="decimal" value="${getBudget() || ''}" placeholder="${tr('e.g. 3000000', 'jaise 3000000')}" style="flex:1;padding:12px 14px;border:1.5px solid var(--line);border-radius:12px" /><button class="btn-secondary" id="budget-save">${tr('Save', 'Save')}</button></div>
+      <div class="muted" style="margin-top:6px">${tr('Shown on Home as a progress bar (saved on this phone).', 'Home pe progress bar dikhega (is phone me save hota hai).')}</div>
+
+      <div class="section-label">${tr('Hisaab check', 'Hisaab check')}</div>
+      <button class="btn-secondary" id="cleanup" style="width:100%">🧹 ${tr('Hisaab cleanup (suggestions)', 'Hisaab cleanup (suggestions)')}</button>
+      ${localStorage.getItem('gk_cleanup_undo') ? `<button class="btn-ghost" id="cleanup-undo" style="width:100%">↩️ ${tr('Undo last cleanup', 'Pichla cleanup undo karo')}</button>` : ''}
 
       <div class="section-label">${tr('Backup', 'Backup')}</div>
       <div class="small-actions">
@@ -796,6 +1141,9 @@ function screenSettings() {
   const bind = () => {
     $('#lang-toggle').querySelectorAll('button').forEach((b) => b.onclick = () => { if (b.dataset.l !== lang) { setLang(b.dataset.l); refresh(); } });
     $('#add-acc').onclick = () => openAccountForm();
+    $('#budget-save').onclick = () => { const b = num($('#budget-in').value); if (isNaN(b) || b <= 0) localStorage.removeItem('gk_budget'); else localStorage.setItem('gk_budget', String(money(b))); toast(tr('Budget saved', 'Budget save')); };
+    $('#cleanup').onclick = openCleanup;
+    const cu = $('#cleanup-undo'); if (cu) cu.onclick = undoCleanup;
     $('#screen').querySelectorAll('.entry[data-acc]').forEach((el) => el.onclick = () => {
       const a = state.accounts.find((x) => x.id === el.dataset.acc); if (a) openAccountForm(a);
     });
@@ -819,7 +1167,8 @@ function screenSettings() {
         if (!confirm(tr(n + ' entr' + (n > 1 ? 'ies are' : 'y is') + ' not synced yet and will be LOST on logout. Logout anyway?', n + ' entries abhi sync nahi hui — logout par chali jayengi. Fir bhi logout?'))) return;
       }
       if (sb) { try { await sb.auth.signOut(); } catch (_) {} }
-      localStorage.removeItem('gk_pending'); location.reload();
+      // Phone pe pichle user ka hisaab na reh jaye (shared phone par dusre ko dikh jaata tha)
+      clearLocalData(); location.reload();
     };
   };
   return { html, bind };
@@ -879,7 +1228,7 @@ function openOutForm(existing) {
         <div class="chips recent" id="rc-items"></div>
       </div>
       <div class="row3">
-        <div class="field"><label>${tr('Qty', 'Qty')}</label><input id="f-qty" type="text" inputmode="decimal" value="${t.qty ?? ''}" placeholder="0" /></div>
+        <div class="field"><label id="qty-label">${tr('Qty', 'Qty')}</label><input id="f-qty" type="text" inputmode="decimal" value="${t.qty ?? ''}" placeholder="0" /></div>
         <div class="field"><label>${tr('Unit', 'Unit')}</label><select id="f-unit">${unitOpts.map((u) => `<option ${u === t.unit ? 'selected' : ''}>${esc(u)}</option>`).join('')}</select></div>
         <div class="field"><label id="rate-label">${tr('Rate ₹', 'Rate ₹')}</label><input id="f-rate" type="text" inputmode="decimal" value="${t.rate ?? ''}" placeholder="0" /></div>
       </div>
@@ -892,7 +1241,7 @@ function openOutForm(existing) {
     <div class="field"><label>${tr('Amount ₹ (total)', 'Amount ₹ (kul)')}</label><input id="f-amount" type="text" inputmode="decimal" value="${t.amount ?? ''}" placeholder="0" /><div class="amt-preview" id="amt-prev"></div></div>
 
     <div class="field"><label>${tr('From / to whom (vendor)', 'Kisse aaya / kise diya (vendor)')}</label><input id="f-vendor" list="dl-vendor" value="${esc(t.vendor || '')}" placeholder="${tr('shop / person name', 'dukaan / aadmi ka naam')}" />
-      <datalist id="dl-vendor">${learned('gk_vendors').map((v) => `<option>${esc(v)}</option>`).join('')}</datalist>
+      <datalist id="dl-vendor">${allVendors().map((v) => `<option>${esc(v)}</option>`).join('')}</datalist>
       <div class="chips recent" id="rc-vendors"></div></div>
 
     <div class="field"><label>${tr('Payment mode', 'Payment mode')}</label>${chipsHtml('mode', PAY_MODES, t.payment_mode)}</div>
@@ -901,7 +1250,7 @@ function openOutForm(existing) {
     <div id="more-block" class="hidden">
       <div class="field" id="account-field"><label>${tr('Paid from (account)', 'Paisa kahan se gaya (account)')}</label><select id="f-account">${accOptions(t.account_id)}</select></div>
       <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
-      <div class="field"><label>${tr('Note (optional)', 'Note (optional)')}</label><textarea id="f-notes" placeholder="${tr('any detail…', 'koi detail…')}">${esc(t.notes || '')}</textarea></div>
+      <div class="field"><label>${tr('Note (optional)', 'Note (optional)')}</label><textarea id="f-notes" placeholder="${tr('any detail…', 'koi detail…')}">${esc(cleanNote(t.notes))}</textarea></div>
     </div>
 
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
@@ -972,14 +1321,16 @@ function openOutForm(existing) {
       Number(existing.amount).toFixed(2) !== lineAmount(existing.qty, existing.rate, existing.unit).toFixed(2)));
     // Eint/Hazaar jaise per-1000 unit par Rate ka label "/ 1000" dikhao (taaki per-piece rate na daale)
     const rateLabel = root.querySelector('#rate-label');
-    const syncRateLabel = () => { rateLabel.textContent = PER_1000_UNITS.includes(unitEl.value) ? tr('Rate ₹ / 1000', 'Rate ₹ / 1000') : tr('Rate ₹', 'Rate ₹'); };
+    const qtyLabel = root.querySelector('#qty-label');
+    const syncRateLabel = () => { const p = PER_1000_UNITS.includes(unitEl.value); rateLabel.textContent = p ? tr('Rate ₹ / 1000', 'Rate ₹ / 1000') : tr('Rate ₹', 'Rate ₹'); qtyLabel.textContent = p ? tr('Qty (pcs)', 'Qty (ginti)') : tr('Qty', 'Qty'); };
     const calc = () => {
       syncRateLabel();
       const q = num(qty.value), r = num(rate.value);
       if (!isNaN(q) && !isNaN(r)) {
         const per1000 = PER_1000_UNITS.includes(unitEl.value);
         const amt = lineAmount(q, r, unitEl.value);
-        prev.innerHTML = `${q} × ${inr(r)}${per1000 ? ' <b>÷ 1000</b>' : ''} = <b>${inr(amt)}</b>`;
+        prev.innerHTML = `${q} × ${inr(r)}${per1000 ? ' <b>÷ 1000</b>' : ''} = <b>${inr(amt)}</b>` +
+          (per1000 && q > 0 && q < 100 ? `<br><span style="color:#c0392b">⚠️ ${tr('Qty must be the full count (e.g. 5000 bricks), not thousands', 'Qty me poori ginti daalo (jaise 5000 eint), hazaar nahi')}</span>` : '');
         if (!manual) amount.value = amt.toFixed(2).replace(/\.00$/, '');
       } else prev.textContent = '';
     };
@@ -1045,7 +1396,7 @@ function openOutForm(existing) {
         account_id: mode === 'Udhaar' ? null : (root.querySelector('#f-account').value || null),
         payment_mode: mode,
         vendor: root.querySelector('#f-vendor').value.trim() || null,
-        notes: root.querySelector('#f-notes').value.trim() || null,
+        notes: joinNote(root.querySelector('#f-notes').value, noteMarkers(t.notes)),
         item: null, qty: null, unit: null, rate: null, contract_id: null
       };
       if (cat === 'Theka Payment') { rec.contract_id = root.querySelector('#f-contract').value || null; }
@@ -1063,10 +1414,14 @@ function openOutForm(existing) {
       }
       rec.amount = money(rec.amount);   // paise tak round (float drift store na ho)
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
+      // Pehle se maujood spelling use karo ("tinku biana" → "Tinku Biana") — naya variant na bane
+      rec.vendor = canonName(rec.vendor, vendorMap()); rec.item = canonName(rec.item, itemMap());
+      if (mode === 'Udhaar') rec.notes = joinNote(cleanNote(rec.notes), noteMarkers(rec.notes).replace(/\[\[paid:[^\]]*\]\]/g, '').trim());
+      if (!confirmIfDup(rec, !isEdit)) return;
       learnList('gk_items_' + cat, rec.item); learnList('gk_vendors', rec.vendor);
       bumpRecent('gk_ri_' + cat, rec.item); bumpRecent('gk_rv', rec.vendor);
       setCatDefault(cat, rec.account_id, mode);   // is category ka last-used account+mode yaad
-      await saveTx(rec, !isEdit); closeSheet();
+      closeSheet(); saveTx(rec, !isEdit);
     };
   });
 }
@@ -1084,7 +1439,7 @@ function openInForm(existing) {
     <div class="field"><label>${tr('From whom (name, optional)', 'Kisse (naam, optional)')}</label><input id="f-from" list="dl-from" value="${esc(t.from_party || '')}" placeholder="${tr('person / bank', 'aadmi / bank')}" />
       <datalist id="dl-from">${learned('gk_from').map((v) => `<option>${esc(v)}</option>`).join('')}</datalist></div>
     <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
-    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="f-notes">${esc(t.notes || '')}</textarea></div>
+    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="f-notes">${esc(cleanNote(t.notes))}</textarea></div>
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
     ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
@@ -1100,12 +1455,14 @@ function openInForm(existing) {
         account_id: root.querySelector('#f-account').value || null,
         source: chipVal(root, 'src') || 'Bank Withdrawal', from_party: root.querySelector('#f-from').value.trim() || null,
         payment_mode: acc && acc.type === 'Cash' ? 'Cash' : 'Net Banking',
-        notes: root.querySelector('#f-notes').value.trim() || null
+        notes: joinNote(root.querySelector('#f-notes').value, noteMarkers(t.notes))
       };
       rec.amount = money(rec.amount);
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
+      rec.from_party = canonName(rec.from_party, spellingMap([...state.transactions.map((x) => x.from_party), ...learned('gk_from')]));
+      if (!confirmIfDup(rec, !existing)) return;
       learnList('gk_from', rec.from_party);
-      await saveTx(rec, !existing); closeSheet();
+      closeSheet(); saveTx(rec, !existing);
     };
   });
 }
@@ -1120,7 +1477,7 @@ function openTransferForm(existing) {
     <div class="field"><label>${tr('To', 'Kahan (to)')}</label><select id="f-to">${accOptions(t.to_account_id)}</select></div>
     <div class="field"><label>${tr('Amount ₹', 'Amount ₹')}</label><input id="f-amount" type="number" inputmode="decimal" step="any" value="${t.amount ?? ''}" placeholder="0" /></div>
     <div class="field"><label>${tr('Date', 'Date')}</label><input id="f-date" type="date" value="${t.date}" /></div>
-    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="f-notes">${esc(t.notes || '')}</textarea></div>
+    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="f-notes">${esc(cleanNote(t.notes))}</textarea></div>
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
     ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
@@ -1134,11 +1491,12 @@ function openTransferForm(existing) {
         id: t.id, type: 'Transfer', date: root.querySelector('#f-date').value || today(),
         amount: parseFloat(root.querySelector('#f-amount').value) || 0,
         account_id: from, to_account_id: to, payment_mode: 'Transfer',
-        notes: root.querySelector('#f-notes').value.trim() || null
+        notes: joinNote(root.querySelector('#f-notes').value, noteMarkers(t.notes))
       };
       rec.amount = money(rec.amount);
       if (!(rec.amount > 0)) return toast(tr('Enter a valid amount', 'Amount sahi daalein'), true);
-      await saveTx(rec, !existing); closeSheet();
+      if (!confirmIfDup(rec, !existing)) return;
+      closeSheet(); saveTx(rec, !existing);
     };
   });
 }
@@ -1151,7 +1509,7 @@ function openEntryDetail(t) {
   lines.push([tr('Date', 'Date'), fmtDate(t.date)]);
   if (t.category) lines.push([tr('Category', 'Category'), t.category]);
   if (t.item) lines.push([tr('Item', 'Item'), t.item]);
-  if (t.qty) lines.push([tr('Qty', 'Qty'), `${t.qty} ${t.unit || ''}${t.rate ? ' @ ' + inr(t.rate) : ''}`]);
+  if (t.qty) lines.push([tr('Qty', 'Qty'), fmtQtyRate(t)]);
   if (t.vendor) lines.push([tr('Vendor', 'Vendor'), t.vendor]);
   if (t.source) lines.push([tr('Source', 'Source'), t.source]);
   if (t.from_party) lines.push([tr('From', 'Kisse'), t.from_party]);
@@ -1159,7 +1517,8 @@ function openEntryDetail(t) {
   else if (t.account_id) lines.push([tr('Account', 'Account'), accName(t.account_id)]);
   if (t.payment_mode) lines.push([tr('Mode', 'Mode'), t.payment_mode]);
   if (t.contract_id) lines.push([tr('Theka', 'Theka'), (state.contracts.find((c) => c.id === t.contract_id) || {}).thekedar_name || '—']);
-  if (t.notes) lines.push([tr('Note', 'Note'), t.notes]);
+  if (cleanNote(t.notes)) lines.push([tr('Note', 'Note'), cleanNote(t.notes)]);
+  if (paidOn(t.notes)) lines.push([tr('Udhaar paid on', 'Udhaar chukaya'), fmtDate(paidOn(t.notes))]);
 
   const isUdhaar = t.type === 'Out' && t.payment_mode === 'Udhaar';
   const inner = `
@@ -1175,7 +1534,7 @@ function openEntryDetail(t) {
     root.querySelector('#del').onclick = () => confirmDelete(t);
     root.querySelector('#edit').onclick = () => { closeSheet(); if (t.type === 'Out') openOutForm(t); else if (t.type === 'In') openInForm(t); else openTransferForm(t); };
     const rpt = root.querySelector('#repeat');
-    if (rpt) rpt.onclick = () => { closeSheet(); openOutForm(Object.assign({}, t, { id: uid(), date: today(), notes: t.notes && !/\[\[/.test(t.notes) ? t.notes : null })); };
+    if (rpt) rpt.onclick = () => { closeSheet(); const c = Object.assign({}, t, { id: uid(), date: today(), notes: cleanNote(t.notes) || null }); delete c.created_at; openOutForm(c); };
     if (isUdhaar) root.querySelector('#settle').onclick = () => { closeSheet(); openSettleForm(t); };
   });
 }
@@ -1190,7 +1549,10 @@ function openSettleForm(t) {
     <button class="btn-primary" id="save">💾 ${tr('Mark paid', 'Paid mark karo')}</button>
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
   openSheet(inner, (root) => {
-    bindChips(root, 'smode');
+    const sAcc = root.querySelector('#s-acc');
+    sAcc.value = accountForMode('Cash', null) || '';
+    // Mode chuna → account us type ka (Cash → Cash account, UPI/Net Banking → Bank) — Kharcha form jaisa
+    bindChips(root, 'smode', (m) => { const a = accountForMode(m, sAcc.value); if (a) sAcc.value = a; });
     const amtEl = root.querySelector('#s-amt'), prev = root.querySelector('#s-prev');
     const total = money(Number(t.amount) || 0);
     const showPrev = () => {
@@ -1207,19 +1569,11 @@ function openSettleForm(t) {
       const mode = chipVal(root, 'smode');
       let paid = num(amtEl.value);
       if (isNaN(paid) || paid <= 0) return toast(tr('Enter amount paid', 'Kitna diya wo daalo'), true);
-      paid = money(paid);
-      if (paid >= total) {
-        // poora chukaya → wahi entry paid ban jaati hai (original kharch ki date waisi ki waisi)
-        await saveTx(Object.assign({}, t, { payment_mode: mode, account_id: acc }), false);
-      } else {
-        // aadha chukaya → is entry ka utna paid; baaki ke liye nayi Udhaar entry (same date/item/vendor)
-        const paidRec = Object.assign({}, t, { amount: paid, payment_mode: mode, account_id: acc });
-        const remRec = Object.assign({}, t, { id: uid(), amount: money(total - paid), payment_mode: 'Udhaar', account_id: null });
-        delete remRec.created_at;   // nayi entry → naya timestamp saveTx laga dega
-        await saveTx(paidRec, false);
-        await saveTx(remRec, true);
-      }
-      closeSheet(); toast(tr('Udhaar updated ✅', 'Udhaar update ho gaya ✅'));
+      paid = money(Math.min(paid, total));
+      // poora → wahi entry paid (+ [[paid:aaj]]); aadha → utna paid, baaki nayi Udhaar entry (settleUdhaar)
+      closeSheet();
+      await settleUdhaar([t], paid, acc, mode, today());
+      refresh(); toast(tr('Udhaar updated ✅', 'Udhaar update ho gaya ✅'));
     };
   });
 }
@@ -1232,11 +1586,22 @@ function parseSqft(notes) {
   if (m) { try { sqft = JSON.parse(m[1]); } catch (_) { } text = (notes || '').replace(/\s*\[\[sqft:\{.*?\}\]\]/, '').trim(); }
   return { text, sqft };
 }
-function buildNote(text, sqft) {
+function buildNote(text, sqft, rates) {
   let n = (text || '').trim();
   if (sqft && (Number(sqft.ga) || Number(sqft.fa))) n = (n ? n + ' ' : '') + '[[sqft:' + JSON.stringify(sqft) + ']]';
+  if (rates && rates.length) n = (n ? n + ' ' : '') + '[[rates:' + encodeURIComponent(JSON.stringify(rates)) + ']]';
   return n || null;
 }
+// Rate-wise theka (jaise tile: ₹/sqft, ₹/running ft, per step, fix). Notes me [[rates:<url-encoded JSON>]]
+// (encode isliye ki JSON ke ']' marker ko na todein). Har line: {n: kaam, r: rate, u: unit, q: measurement qty}
+const RATE_UNITS = { sqft: '/sqft', rft: '/running ft', pc: '/piece', fix: 'fix' };
+function parseRates(notes) {
+  const m = String(notes || '').match(/\[\[rates:([^\]]*)\]\]/);
+  if (!m) return [];
+  try { const a = JSON.parse(decodeURIComponent(m[1])); return Array.isArray(a) ? a : []; } catch (_) { return []; }
+}
+function rateLineAmt(l) { return (Number(l.r) || 0) * (Number(l.q) || 0); }
+function ratesTotal(list) { return list.reduce((s, l) => s + rateLineAmt(l), 0); }
 function sqftLabel(notes) {
   const s = parseSqft(notes).sqft; if (!s) return '';
   const g = Number(s.ga) || 0, gr = Number(s.gr) || 0, f = Number(s.fa) || 0, fr = Number(s.fr) || 0;
@@ -1258,9 +1623,15 @@ function openThekaForm(existing) {
     <div class="row2"><div class="field"><label>${tr('1st floor sqft', '1st floor sqft')}</label><input id="t-f-area" type="number" inputmode="decimal" placeholder="0" /></div><div class="field"><label>${tr('₹ / sqft', '₹ / sqft')}</label><input id="t-f-rate" type="number" inputmode="decimal" placeholder="${tr('rate', 'rate')}" /></div></div>
     <div class="amt-preview" id="t-sqft-prev"></div>
 
+    <div class="section-label" style="margin-top:8px">${tr('Rate list (rate-wise theka, optional)', 'Rate list (rate-wise theka, optional)')}</div>
+    <div class="muted" style="margin:-4px 2px 6px">${tr('Rate per kaam; fill Qty when measurement is done.', 'Har kaam ka rate; measurement hone par Qty bharo.')}</div>
+    <div id="t-rates"></div>
+    <button type="button" class="btn-secondary" id="t-rate-add" style="width:100%">+ ${tr('Add rate line', 'Rate line jodo')}</button>
+    <div class="amt-preview" id="t-rate-prev"></div>
+
     <div class="field"><label>${tr('Theka amount ₹', 'Theka amount ₹')}</label><input id="t-amt" type="number" inputmode="decimal" step="any" value="${c.theka_amount ?? ''}" placeholder="0" /></div>
     <div class="field"><label>${tr('Start date', 'Shuru date')}</label><input id="t-date" type="date" value="${c.start_date || today()}" /></div>
-    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="t-notes">${esc(sp.text || '')}</textarea></div>
+    <div class="field"><label>${tr('Note', 'Note')}</label><textarea id="t-notes">${esc(cleanNote(c.notes))}</textarea></div>
     <button class="btn-primary" id="save">💾 ${tr('Save', 'Save')}</button>
     ${existing ? `<button class="btn-primary danger" id="del">🗑️ ${tr('Delete', 'Delete')}</button>` : ''}
     <button class="btn-ghost" id="cancel">${tr('Cancel', 'Cancel')}</button>`;
@@ -1295,6 +1666,25 @@ function openThekaForm(existing) {
       calcSqft(false);   // sirf preview — stored theka_amount ko mat chhedo
     }
 
+    // Rate list rows
+    const rWrap = root.querySelector('#t-rates'), rPrev = root.querySelector('#t-rate-prev');
+    const rowHtml = (l) => `<div class="rate-row">
+      <input class="rl-n" placeholder="${tr('Work', 'Kaam')}" value="${esc(l.n || '')}" />
+      <input class="rl-r" inputmode="decimal" placeholder="₹" value="${l.r ?? ''}" />
+      <select class="rl-u">${Object.entries(RATE_UNITS).map(([k, v]) => `<option value="${k}" ${k === (l.u || 'sqft') ? 'selected' : ''}>${esc(v)}</option>`).join('')}</select>
+      <input class="rl-q" inputmode="decimal" placeholder="${tr('Qty', 'Qty')}" value="${Number(l.q) ? l.q : ''}" />
+      <button type="button" class="rl-x" aria-label="remove">✕</button></div>`;
+    const readRates = () => Array.from(rWrap.querySelectorAll('.rate-row')).map((r) => ({ n: r.querySelector('.rl-n').value.trim(), r: num(r.querySelector('.rl-r').value) || 0, u: r.querySelector('.rl-u').value, q: num(r.querySelector('.rl-q').value) || 0 })).filter((l) => l.n);
+    const calcRates = () => {
+      const t = ratesTotal(readRates());
+      rPrev.innerHTML = t ? `${tr('Measured total', 'Measurement total')}: <b>${inr(t)}</b> <button type="button" class="link-btn" id="t-rate-use">${tr('Use as theka amount', 'Theka amount me daalo')}</button>` : '';
+      const u = rPrev.querySelector('#t-rate-use'); if (u) u.onclick = () => { amtEl.value = money(t); amtTouchedManually = true; };
+    };
+    const addRow = (l) => { rWrap.insertAdjacentHTML('beforeend', rowHtml(l || {})); const r = rWrap.lastElementChild; r.querySelectorAll('input,select').forEach((e) => e.oninput = calcRates); r.querySelector('.rl-x').onclick = () => { r.remove(); calcRates(); }; };
+    parseRates(c.notes).forEach(addRow);
+    root.querySelector('#t-rate-add').onclick = () => addRow({ u: 'sqft' });
+    calcRates();
+
     root.querySelector('#cancel').onclick = closeSheet;
     if (existing) root.querySelector('#del').onclick = async () => {
       if (!confirm(tr('Delete this theka? This cannot be undone.', 'Ye theka delete karein? Wapas nahi aayega.'))) return;
@@ -1306,8 +1696,9 @@ function openThekaForm(existing) {
         id: c.id, user_id: userId(), thekedar_name: root.querySelector('#t-name').value.trim() || null,
         kaam: root.querySelector('#t-kaam').value.trim() || null, theka_amount: money(parseFloat(root.querySelector('#t-amt').value) || 0),
         start_date: root.querySelector('#t-date').value || null,
-        notes: buildNote(root.querySelector('#t-notes').value, { ga: parseFloat(gArea.value) || 0, gr: parseFloat(gRate.value) || 0, fa: parseFloat(fArea.value) || 0, fr: parseFloat(fRate.value) || 0 })
+        notes: buildNote(root.querySelector('#t-notes').value, { ga: parseFloat(gArea.value) || 0, gr: parseFloat(gRate.value) || 0, fa: parseFloat(fArea.value) || 0, fr: parseFloat(fRate.value) || 0 }, readRates())
       };
+      if (c.created_at) rec.created_at = c.created_at;
       const i = state.contracts.findIndex((x) => x.id === c.id);
       if (i >= 0) state.contracts[i] = rec; else state.contracts.push(rec);
       cacheSet('contracts', state.contracts);
@@ -1351,19 +1742,41 @@ function openAccountForm(existing) {
 }
 
 /* =========================== Save / Delete ====================== */
-function userId() { return state.session && state.session.user ? state.session.user.id : null; }
-async function saveTx(rec, isNew) {
+function userId() { return state.session && state.session.user ? state.session.user.id : (localStorage.getItem('gk_uid') || null); }
+// Phone se is user ka cached hisaab hatao (cloud data ko kuch nahi hota). Language/config rehne do.
+function clearLocalData() {
+  for (const k of Object.keys(localStorage)) {
+    if (k.startsWith('gk_cache_') || k === 'gk_pending' || k === 'gk_uid' || k === 'gk_email' || k === 'gk_cleanup_undo' || k === 'gk_activity') localStorage.removeItem(k);
+  }
+}
+// Same din + same item/vendor + same amount + same mode wali entry pehle se hai? (double-tap / dobara daalna)
+function findDup(rec, loose) {
+  return state.transactions.find((x) => x.id !== rec.id && x.type === rec.type && x.date === rec.date &&
+    money(x.amount) === money(rec.amount) && nameKey(x.item) === nameKey(rec.item) && nameKey(x.vendor) === nameKey(rec.vendor) &&
+    (loose || (x.category || null) === (rec.category || null)) &&
+    (rec.type !== 'In' || nameKey(x.source) === nameKey(rec.source)) &&
+    (rec.type !== 'Transfer' || (x.account_id === rec.account_id && x.to_account_id === rec.to_account_id)));
+}
+function confirmIfDup(rec, isNew) {
+  if (!isNew) return true;
+  const d = findDup(rec);
+  if (!d) return true;
+  return confirm(tr('A same entry already exists on ', 'Ye entry pehle se hai: ') + fmtDate(d.date) + ' · ' + (d.item || d.category || d.source || d.type) + ' · ' + inr(d.amount) +
+    '\n\n' + tr('Save again anyway?', 'Fir bhi dobara save karein?'));
+}
+// Local pehle (turant dikhe), cloud background me — form network ka wait nahi karta.
+// quiet = bulk kaam (settle/cleanup) me har row pe toast/refresh mat karo.
+async function saveTx(rec, isNew, quiet) {
   rec.user_id = userId();
   const i = state.transactions.findIndex((x) => x.id === rec.id);
   if (i >= 0) state.transactions[i] = Object.assign({}, state.transactions[i], rec);
   else { if (!rec.created_at) rec.created_at = new Date().toISOString(); state.transactions.unshift(rec); }  // local timestamp → naya entry "Recent" me upar rahe
   sortTxns();   // date desc, fir created_at desc
   cacheSet('transactions', state.transactions);
-  refresh();
-  await pushRow('transactions', rec);
+  if (!quiet) refresh();
   logEvent('entry', (isNew ? tr('Saved', 'Save') : tr('Updated', 'Update')) + ': ' + (rec.item || rec.category || tr('entry', 'entry')) + ' ' + inr(rec.amount) + (rec.payment_mode ? ' · ' + rec.payment_mode : ''), 'info');
-  renderHeader();
-  toast(isNew ? tr('Entry saved ✅', 'Entry save ho gayi ✅') : tr('Updated ✅', 'Update ho gaya ✅'));
+  pushRow('transactions', rec).then(() => renderHeader());   // jaan-boojh ke await nahi (slow network pe form atakta tha)
+  if (!quiet) toast(isNew ? tr('Entry saved ✅', 'Entry save ho gayi ✅') : tr('Updated ✅', 'Update ho gaya ✅'));
 }
 function confirmDelete(t) {
   if (!confirm(tr('Delete this entry?', 'Ye entry delete karein?'))) return;
@@ -1399,6 +1812,192 @@ function openActivityLog() {
   renderHeader();
 }
 
+/* ======================= Hisaab cleanup (suggestions) ======================= */
+// Data me milne wali gadbad ke SUJHAV. Kuch bhi apne aap nahi badalta: user har sujhav dekh ke tick karta hai,
+// apply se pehle poora JSON backup download hota hai, aur "Undo" se purani rows wapas aa jaati hain.
+// Amount kabhi nahi badalta (sirf duplicate delete karne par wo entry hatti hai — wo default OFF hai).
+const NAME_STOP = new Set(['labour', 'majdoor', 'mazdoor', 'mistry', 'wala', 'wale', 'wali', 'supplier', 'brick', 'bricks', 'shop', 'store', 'trader', 'traders',
+  'multiple', 'vendor', 'vendors', 'person', 'persons', 'payment', 'cash', 'ji', 'bhai', 'se', 'pehle', 'ke', 'ka', 'ki', 'and', 'aur', 'the', 'co']);
+function nameCore(s) { return String(s || '').toLowerCase().split(/[^a-z0-9ऀ-ॿ]+/).filter((w) => w && !NAME_STOP.has(w)); }
+const PERSONAL_RE = /\b(sunar|jewel\w*|payal|hospital|doctor|dawai|dawa|medicine)\b/i;
+const MATERIAL_RE = /\b(cement|reta|bajri|sariya|saria|eint|gitti|rodi|dust)\b/i;
+const TRANSPORT_RE = /(kiraya|karaya|bhada|bhaada|lane ka|transport)/i;
+
+function computeCleanup() {
+  const T = state.transactions, props = [];
+  const txLabel = (t) => `${fmtDate(t.date)} · ${t.item || t.category || t.type} · ${t.vendor || t.from_party || ''} · ${inr(t.amount)}`;
+
+  // 1) Eint/Hazaar: qty hazaar me likhi (5) jabki formula poori ginti maangta hai (5000). Amount same rehta hai.
+  const eint = T.filter((t) => PER_1000_UNITS.includes(t.unit) && Number(t.qty) > 0 && Number(t.qty) < 100 && Number(t.rate) > 0 &&
+    Math.abs(Number(t.qty) * Number(t.rate) - Number(t.amount)) < 1);
+  if (eint.length) props.push({ key: 'eint', on: true, title: tr('Eint qty: thousands → full count', 'Eint qty: hazaar → poori ginti'),
+    why: tr('Amount stays the same. Fixes item report and editing (otherwise editing could turn ₹38,000 into ₹38).', 'Amount wahi rahega. Item report aur edit theek honge (warna edit pe ₹38,000 → ₹38 ho sakta tha).'),
+    changes: eint.map((t) => ({ table: 'transactions', id: t.id, set: { qty: Number(t.qty) * 1000 }, label: txLabel(t), from: `${t.qty} ${t.unit}`, to: `${Number(t.qty) * 1000} pcs` })) });
+
+  // 2) Vendor naam ek karo: same naam alag spelling + "Rajnish" / "Rajnish Biana" / "Brick Supplier Rajnish Biana"
+  const cnt = {};
+  for (const t of T) if (t.vendor) cnt[t.vendor.trim()] = (cnt[t.vendor.trim()] || 0) + 1;
+  for (const c of state.contracts) if (c.thekedar_name) cnt[c.thekedar_name.trim()] = (cnt[c.thekedar_name.trim()] || 0);
+  const names = Object.keys(cnt), parent = {};
+  const find = (x) => (parent[x] === x ? x : (parent[x] = find(parent[x])));
+  names.forEach((n) => { parent[n] = n; });
+  const union = (a, b) => { parent[find(a)] = find(b); };
+  for (let i = 0; i < names.length; i++) for (let j = i + 1; j < names.length; j++) {
+    const a = names[i], b = names[j];
+    if (nameKey(a) && nameKey(a) === nameKey(b)) { union(a, b); continue; }
+    const ca = nameCore(a), cb = nameCore(b);
+    const [s, l] = ca.length <= cb.length ? [ca, cb] : [cb, ca];
+    if (s.length && s[0].length >= 4 && s.every((w, k) => l[k] === w)) union(a, b);
+  }
+  const groups = {};
+  names.forEach((n) => { (groups[find(n)] = groups[find(n)] || []).push(n); });
+  for (const g of Object.values(groups)) {
+    if (g.length < 2) continue;
+    // Title Case wali spelling pehle ("Tinku Biana" > "Tinku biana"), phir jo zyada use hui
+    const canon = g.slice().sort((a, b) => titledName(b) - titledName(a) || cnt[b] - cnt[a] || b.length - a.length)[0];
+    const ch = [];
+    for (const t of T) if (t.vendor && g.includes(t.vendor.trim()) && t.vendor !== canon) ch.push({ table: 'transactions', id: t.id, set: { vendor: canon }, label: txLabel(t), from: t.vendor, to: canon });
+    for (const c of state.contracts) if (c.thekedar_name && g.includes(c.thekedar_name.trim()) && c.thekedar_name !== canon) ch.push({ table: 'contracts', id: c.id, set: { thekedar_name: canon }, label: tr('Theka', 'Theka') + ' · ' + (c.kaam || ''), from: c.thekedar_name, to: canon });
+    if (ch.length) props.push({ key: 'vendor:' + canon, on: true, title: tr('Same vendor: ', 'Ek hi vendor: ') + g.map((x) => `"${x}"`).join(' + ') + ' → "' + canon + '"',
+      why: tr('Only the name changes. Untick if these are different people.', 'Sirf naam badlega. Agar ye alag log hain to tick hata do.'), changes: ch });
+  }
+
+  // 3) Theka payment ka vendor = thekedar (vendor field me description likha tha → note me shift)
+  for (const c of state.contracts) {
+    const ch = [];
+    for (const t of T) {
+      if (t.type !== 'Out' || t.category !== 'Theka Payment' || t.contract_id !== c.id || !c.thekedar_name) continue;
+      if (nameKey(t.vendor) === nameKey(c.thekedar_name)) continue;
+      ch.push({ table: 'transactions', id: t.id, set: { vendor: c.thekedar_name, notes: joinNote([t.vendor, cleanNote(t.notes)].filter(Boolean).join(' — '), noteMarkers(t.notes)) },
+        label: txLabel(t), from: t.vendor || '—', to: c.thekedar_name + (t.vendor ? ` (${tr('note', 'note')}: "${t.vendor}")` : '') });
+    }
+    if (ch.length) props.push({ key: 'theka:' + c.id, on: true, title: tr('Theka payments → vendor ', 'Theka payment ka vendor → ') + c.thekedar_name,
+      why: tr('These payments are already counted in this theka; only the vendor name is fixed and the old text moves to the note.', 'Ye payments pehle se isi theke me gini hain; sirf vendor naam theek hoga, purana text note me chala jayega.'), changes: ch });
+  }
+
+  // 4) Personal kharcha ghar ke kharche se alag
+  const pers = T.filter((t) => t.type === 'Out' && t.category !== 'Personal' && PERSONAL_RE.test([t.item, t.notes, t.vendor].join(' ')));
+  if (pers.length) props.push({ key: 'personal', on: true, title: tr('Move personal spends to "Personal"', 'Personal kharche → "Personal" category'),
+    why: tr('Still deducted from cash; just not counted in house construction total.', 'Cash se katna waisa hi rahega; bas ghar ke construction total me nahi gina jayega.'),
+    changes: pers.map((t) => ({ table: 'transactions', id: t.id, set: { category: 'Personal' }, label: txLabel(t), from: t.category, to: 'Personal' })) });
+
+  // 5) Misc me material (cement/reta…) → Material (kiraya/transport Misc hi rahe)
+  const misc = T.filter((t) => t.type === 'Out' && t.category === 'Misc' && MATERIAL_RE.test(t.item || '') && !TRANSPORT_RE.test(t.item || ''));
+  if (misc.length) props.push({ key: 'misc', on: true, title: tr('Material logged under Misc → Material', 'Misc me likha material → Material'), why: '',
+    changes: misc.map((t) => ({ table: 'transactions', id: t.id, set: { category: 'Material' }, label: txLabel(t), from: 'Misc', to: 'Material' })) });
+
+  // 6) Custom category (jaise "Chokhat") → Material, taaki saara material ek jagah gine
+  const custom = Array.from(new Set(T.filter((t) => t.type === 'Out' && t.category && !CATEGORIES.includes(t.category)).map((t) => t.category)));
+  for (const cat of custom) {
+    const rows = T.filter((t) => t.type === 'Out' && t.category === cat);
+    props.push({ key: 'cat:' + cat, on: true, title: `"${cat}" → Material`, why: tr('Item name keeps the detail.', 'Item ka naam detail rakhega.'),
+      changes: rows.map((t) => ({ table: 'transactions', id: t.id, set: Object.assign({ category: 'Material' }, t.item ? {} : { item: cat }), label: txLabel(t), from: cat, to: 'Material' + (t.item ? '' : ' · ' + cat) })) });
+  }
+
+  // 7) Pakki double entries (same din/item/vendor/amount/mode) — naya wala hatane ka sujhav, default OFF
+  const seen = {}, dups = [];
+  for (const t of T.slice().sort(sortOldFirst)) {
+    const k = [t.type, t.date, money(t.amount), t.category, nameKey(t.item), nameKey(t.vendor), t.payment_mode, t.account_id, t.to_account_id, nameKey(t.source), cleanNote(t.notes)].join('|');
+    if (seen[k]) dups.push({ keep: seen[k], del: t }); else seen[k] = t;
+  }
+  for (const d of dups) props.push({ key: 'dup:' + d.del.id, on: false, title: tr('Possible double entry: ', 'Shayad double entry: ') + txLabel(d.del),
+    why: tr('Same entry exists (entered earlier). Tick ONLY if it really happened once.', 'Bilkul same entry pehle se hai. Tick SIRF tab karo jab ye kaam sach me ek hi baar hua tha.'),
+    deletes: [{ table: 'transactions', id: d.del.id, label: txLabel(d.del) + ' · ' + tr('entered', 'daali') + ' ' + fmtLogTime(d.del.created_at) }] });
+  return props;
+}
+
+function openCleanup() {
+  const props = computeCleanup();
+  const outTotal = (rows) => rows.filter((t) => t.type === 'Out').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  const body = props.length ? props.map((p, i) => {
+    const n = (p.changes || []).length + (p.deletes || []).length;
+    const rows = (p.changes || []).map((c) => `<div class="cl-row">${esc(c.label)}<br><span class="muted">${esc(c.from)} → <b>${esc(c.to)}</b></span></div>`).join('') +
+      (p.deletes || []).map((d) => `<div class="cl-row">🗑️ ${esc(d.label)}</div>`).join('');
+    return `<label class="cl-item"><input type="checkbox" data-i="${i}" ${p.on ? 'checked' : ''} />
+      <div><b>${esc(p.title)}</b> <span class="muted">(${n})</span>${p.why ? `<div class="muted">${esc(p.why)}</div>` : ''}
+      <details><summary class="muted">${tr('See entries', 'Entries dekho')}</summary>${rows}</details></div></label>`;
+  }).join('') : `<div class="muted center" style="padding:24px">${tr('Nothing to fix 🎉', 'Kuch theek karne layak nahi mila 🎉')}</div>`;
+  const inner = `
+    <h3>🧹 ${tr('Hisaab cleanup', 'Hisaab cleanup')}</h3>
+    <p class="muted" style="margin:0 2px 8px">${tr('Suggestions only — nothing changes until you tap Apply. A full JSON backup downloads first, and you can Undo from Settings.', 'Sirf sujhav — Apply dabane tak kuch nahi badlega. Pehle poora JSON backup download hoga, aur Settings se Undo kar sakte ho.')}</p>
+    <div class="report-card">${body}</div>
+    <div class="report-card" id="cl-sum"></div>
+    ${props.length ? `<button class="btn-primary" id="cl-apply">✅ ${tr('Backup + Apply ticked', 'Backup + tick wale apply karo')}</button>` : ''}
+    <button class="btn-ghost" id="cancel">${tr('Close', 'Band karo')}</button>`;
+  openSheet(inner, (root) => {
+    root.querySelector('#cancel').onclick = closeSheet;
+    const picked = () => Array.from(root.querySelectorAll('input[data-i]')).filter((c) => c.checked).map((c) => props[+c.dataset.i]);
+    const sum = () => {
+      const sel = picked(), delIds = new Set(sel.flatMap((p) => (p.deletes || []).map((d) => d.id)));
+      const before = outTotal(state.transactions), after = outTotal(state.transactions.filter((t) => !delIds.has(t.id)));
+      const nCh = new Set(sel.flatMap((p) => (p.changes || []).map((c) => c.id))).size;
+      root.querySelector('#cl-sum').innerHTML = `<div class="rrow"><div class="k">${tr('Entries changing', 'Entries badlengi')}</div><div class="v">${nCh}</div></div>
+        <div class="rrow"><div class="k">${tr('Entries deleted', 'Entries delete')}</div><div class="v">${delIds.size}</div></div>
+        <div class="rrow"><div class="k">${tr('Total money out (before → after)', 'Kul gaya paisa (pehle → baad)')}</div><div class="v">${inr(before)} → ${inr(after)}</div></div>`;
+    };
+    root.querySelectorAll('input[data-i]').forEach((c) => c.onchange = sum); sum();
+    const ap = root.querySelector('#cl-apply');
+    if (ap) ap.onclick = async () => {
+      const sel = picked(); if (!sel.length) return toast(tr('Nothing ticked', 'Kuch tick nahi kiya'), true);
+      if (!canWrite()) return toast(tr('Connect to internet first (cleanup needs a live connection)', 'Pehle internet chalu karo (cleanup ke liye zaroori)'), true);
+      if (!confirm(tr('A backup file will download first, then the ticked changes apply. Continue?', 'Pehle backup file download hogi, phir tick wale badlav lagenge. Aage badhein?'))) return;
+      ap.disabled = true; ap.textContent = tr('Applying…', 'Lag raha hai…');
+      await applyCleanup(sel);
+      closeSheet(); refresh();
+    };
+  });
+}
+
+async function applyCleanup(sel) {
+  exportJSON('pai-pai-backup-before-cleanup-');
+  const tables = { transactions: state.transactions, contracts: state.contracts, accounts: state.accounts };
+  const before = state.transactions.filter((t) => t.type === 'Out').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  // Har row ke saare badlav jod lo (ek row pe do sujhav ho sakte hain), original ki poori copy undo ke liye
+  const sets = {}, dels = [];
+  for (const p of sel) {
+    for (const c of p.changes || []) { const k = c.table + ':' + c.id; sets[k] = Object.assign(sets[k] || { table: c.table, id: c.id, set: {} }, {}); Object.assign(sets[k].set, c.set); }
+    for (const d of p.deletes || []) dels.push(d);
+  }
+  const delKeys = new Set(dels.map((d) => d.table + ':' + d.id));
+  const undo = { ts: new Date().toISOString(), rows: [] };
+  for (const k of Object.keys(sets)) { if (delKeys.has(k)) continue; const s = sets[k]; const o = tables[s.table].find((x) => x.id === s.id); if (o) undo.rows.push({ table: s.table, row: JSON.parse(JSON.stringify(o)) }); }
+  for (const d of dels) { const o = tables[d.table].find((x) => x.id === d.id); if (o) undo.rows.push({ table: d.table, row: JSON.parse(JSON.stringify(o)) }); }
+  localStorage.setItem('gk_cleanup_undo', JSON.stringify(undo));
+  let n = 0;
+  for (const k of Object.keys(sets)) {
+    if (delKeys.has(k)) continue;
+    const s = sets[k], arr = tables[s.table], i = arr.findIndex((x) => x.id === s.id); if (i < 0) continue;
+    arr[i] = Object.assign({}, arr[i], s.set);
+    await pushRow(s.table, arr[i]); n++;
+  }
+  for (const d of dels) {
+    const arr = tables[d.table], i = arr.findIndex((x) => x.id === d.id); if (i < 0) continue;
+    arr.splice(i, 1); await deleteRow(d.table, d.id); n++;
+  }
+  sortTxns(); cacheSet('transactions', state.transactions); cacheSet('contracts', state.contracts);
+  const after = state.transactions.filter((t) => t.type === 'Out').reduce((s, t) => s + (Number(t.amount) || 0), 0);
+  logEvent('cleanup', tr('Cleanup applied', 'Cleanup laga') + ': ' + n + ' ' + tr('rows', 'rows') + ' · ' + tr('total out', 'kul gaya') + ' ' + inr(before) + ' → ' + inr(after), 'info');
+  toast(tr(n + ' entries updated ✅ (Undo in Settings)', n + ' entries theek ho gayi ✅ (Undo Settings me)'));
+}
+
+async function undoCleanup() {
+  let u; try { u = JSON.parse(localStorage.getItem('gk_cleanup_undo') || 'null'); } catch (_) { u = null; }
+  if (!u || !u.rows || !u.rows.length) return toast(tr('Nothing to undo', 'Undo karne ko kuch nahi'), true);
+  if (!canWrite()) return toast(tr('Connect to internet first', 'Pehle internet chalu karo'), true);
+  if (!confirm(tr(`Restore ${u.rows.length} rows to how they were before the cleanup on ${fmtLogTime(u.ts)}? Any edits you made to these rows after that will also be reverted.`,
+    `${fmtLogTime(u.ts)} wale cleanup se pehle jaisi ${u.rows.length} rows wapas laayein? Uske baad in rows me kiya gaya edit bhi wapas purana ho jayega.`))) return;
+  const tables = { transactions: state.transactions, contracts: state.contracts, accounts: state.accounts };
+  for (const r of u.rows) {
+    const arr = tables[r.table], i = arr.findIndex((x) => x.id === r.row.id);
+    if (i >= 0) arr[i] = r.row; else arr.push(r.row);
+    await pushRow(r.table, r.row);
+  }
+  sortTxns(); cacheSet('transactions', state.transactions); cacheSet('contracts', state.contracts);
+  localStorage.removeItem('gk_cleanup_undo');
+  logEvent('cleanup', tr('Cleanup undone', 'Cleanup undo') + ': ' + u.rows.length + ' rows', 'info');
+  refresh(); toast(tr('Restored ✅', 'Wapas pehle jaisa ✅'));
+}
+
 /* ============================ Export ============================ */
 function download(name, text, mime) {
   const blob = new Blob([text], { type: mime }); const url = URL.createObjectURL(blob);
@@ -1412,15 +2011,17 @@ function exportCSV() {
     let v;
     if (c === 'account') v = accName(t.account_id);
     else if (c === 'to_account') v = t.to_account_id ? accName(t.to_account_id) : '';
+    else if (c === 'notes') v = cleanNote(t.notes);
     else v = t[c];
     v = v == null ? '' : String(v);
+    if (/^[=+\-@]/.test(v) && isNaN(Number(v))) v = "'" + v;   // Excel isse formula na samjhe
     return '"' + v.replace(/"/g, '""') + '"';
   }).join(','));
   download('pai-pai-' + today() + '.csv', '﻿' + head + '\n' + rows.join('\n'), 'text/csv;charset=utf-8');
   toast(tr('CSV downloaded', 'CSV download ho gaya'));
 }
-function exportJSON() {
-  download('pai-pai-backup-' + today() + '.json', JSON.stringify({ accounts: state.accounts, contracts: state.contracts, transactions: state.transactions, exported: today() }, null, 2), 'application/json');
+function exportJSON(prefix) {
+  download((typeof prefix === 'string' ? prefix : 'pai-pai-backup-') + today() + '.json', JSON.stringify({ accounts: state.accounts, contracts: state.contracts, transactions: state.transactions, exported: today() }, null, 2), 'application/json');
   toast(tr('Backup downloaded', 'Backup download ho gaya'));
 }
 
@@ -1593,6 +2194,14 @@ function renderAuth() {
 
 /* ============================ Bootstrap ========================= */
 async function enterApp() {
+  // Is phone pe pehle kisi AUR user ka cache hai to hatao (warna uska hisaab dikh jaata). Apna ho to rehne do.
+  const me = state.session && state.session.user ? state.session.user.id : null;
+  if (me && !state.session.offline) {
+    const prev = localStorage.getItem('gk_uid');
+    if (prev && prev !== me) clearLocalData();
+    localStorage.setItem('gk_uid', me);
+    if (state.session.user.email) localStorage.setItem('gk_email', state.session.user.email);
+  }
   buildShell();
   renderHeader();
   // Cache me jo hai wo TURANT dikhao (network ka wait nahi) — offline-first ka asli fayda
@@ -1601,13 +2210,22 @@ async function enterApp() {
   else app().querySelector('#screen').innerHTML = `<div class="full-loader"><div class="spinner"></div>${tr('Loading data…', 'Data load ho raha hai…')}</div>`;
   renderHeader();
   // Phir background me cloud se latest le kar update kar do
-  if (sb && state.online) { await loadFromCloud(); refresh(); }
+  if (canWrite()) { await loadFromCloud(); refresh(); }
   else show('dashboard');
   renderHeader();
 }
 
 function bindConnectivity() {
-  window.addEventListener('online', async () => { state.online = true; renderHeader(); await flushQueue(); await loadAll(); refresh(); });
+  window.addEventListener('online', async () => {
+    state.online = true; renderHeader();
+    if (state.session && state.session.offline && sb) {
+      // Offline-mode se wapas: asli session lo. Na mile to login maango — queue me padi entries safe rehti hain.
+      let s = null; try { const { data } = await sb.auth.getSession(); s = data ? data.session : null; } catch (_) { }
+      if (!s) { toast(tr('Please log in again — your offline entries are safe and will sync after login', 'Dobara login karo — offline entries safe hain, login ke baad sync hongi'), true); state.authStep = 'login'; renderAuth(); return; }
+      state.session = s;
+    }
+    await flushQueue(); await loadAll(); refresh();
+  });
   window.addEventListener('offline', () => { state.online = false; renderHeader(); });
   document.addEventListener('visibilitychange', async () => {
     if (document.visibilityState === 'visible' && state.online && sb && state.session) { await flushQueue(); renderHeader(); }
@@ -1645,7 +2263,13 @@ async function start() {
     const { data } = await sb.auth.getSession();
     state.session = data ? data.session : null;
   } catch (e) { console.warn(e); }
+  // Offline + token expire = session null aata hai. Phone pe isi user ka cache hai to app khol do
+  // (entries queue me save hongi, net + login ke baad sync). Warna login screen pe atak jaate the.
+  if (!state.session && !navigator.onLine && localStorage.getItem('gk_uid') && cacheGet('transactions').length) {
+    state.session = { offline: true, user: { id: localStorage.getItem('gk_uid'), email: localStorage.getItem('gk_email') || '' } };
+  }
   sb.auth.onAuthStateChange((_ev, session) => {
+    if (!session && state.session && state.session.offline) return;   // offline-mode me logout mat dikhao
     state.session = session;
     if (!session) { state.authStep = cfgValid() ? 'login' : 'config'; renderAuth(); }
   });
